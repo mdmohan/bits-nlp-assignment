@@ -1,0 +1,19 @@
+source_code/README.md
+  s_d5fc88c21a7c7b::t_02a55674a282aa 1-189
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1a64ea299dd28fde2a9ff224102c617035433663",
+  "prompts": {},
+  "sessions": {
+    "s_d5fc88c21a7c7b": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "83f9e29e-51db-4186-8ef7-f963970e91fd",
+        "model": "copilot/claude-opus-5.5"
+      },
+      "human_author": "AxleAddict <akshayjoish28@gmail.com>"
+    }
+  }
+}

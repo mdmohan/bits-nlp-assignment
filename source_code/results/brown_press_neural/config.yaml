@@ -1,0 +1,41 @@
+name: brown_press_neural
+output_dir: results
+device: auto
+seeds:
+- 13
+- 42
+- 2026
+data:
+  loader: brown
+  lowercase: true
+  params:
+    categories:
+    - news
+    - editorial
+    - reviews
+    ratios:
+    - 0.8
+    - 0.1
+    - 0.1
+    split_seed: 42
+vocab:
+  min_freq: 2
+models:
+- name: ffnn
+  params:
+    context_size: 3
+    embed_dim: 128
+    hidden_dim: 256
+    dropout: 0.3
+- name: lstm
+  params:
+    embed_dim: 128
+    hidden_dim: 256
+    num_layers: 1
+    dropout: 0.3
+training:
+  batch_size: 32
+  epochs: 20
+  lr: 0.001
+  grad_clip: 1.0
+  patience: 3

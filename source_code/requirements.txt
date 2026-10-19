@@ -1,0 +1,6 @@
+torch>=2.5
+nltk>=3.9
+pyyaml>=6.0
+pandas>=2.2
+numpy>=1.26
+datasets>=3.0  # only needed for the huggingface loader

@@ -1,0 +1,11 @@
+{
+  "train_sentences": 7475,
+  "train_tokens": 161092,
+  "valid_sentences": 806,
+  "valid_tokens": 18561,
+  "test_sentences": 1090,
+  "test_tokens": 23209,
+  "vocab_size": 8624,
+  "valid_oov_rate": 0.11949787188190292,
+  "test_oov_rate": 0.12120298160196476
+}

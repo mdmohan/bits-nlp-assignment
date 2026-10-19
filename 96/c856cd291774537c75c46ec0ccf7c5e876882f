@@ -1,0 +1,21 @@
+AIMLCZG530_NLP_Group_Assignment_20_Marks_30_Days.pdf
+  s_d5fc88c21a7c7b::t_170516388d4b68 1-112
+source_code/results/brown_press_neural/ffnn_seed13_history.csv
+  s_d5fc88c21a7c7b::t_2878badfeaec86 1-9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "96c856cd291774537c75c46ec0ccf7c5e876882f",
+  "prompts": {},
+  "sessions": {
+    "s_d5fc88c21a7c7b": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "83f9e29e-51db-4186-8ef7-f963970e91fd",
+        "model": "copilot/claude-opus-5.5"
+      },
+      "human_author": "AxleAddict <akshayjoish28@gmail.com>"
+    }
+  }
+}

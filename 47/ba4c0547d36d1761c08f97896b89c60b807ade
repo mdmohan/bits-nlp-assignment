@@ -1,0 +1,38 @@
+src/lm/neural/ffnn/model.py
+  s_6c5628f13414b0::t_d7d416fcfd6cad 1-28
+src/lm/neural/lstm/model.py
+  s_6c5628f13414b0::t_c826c000d1acc0 1-17
+src/lm/statistical/__init__.py
+  s_6c5628f13414b0::t_c17e82a44847c2 1
+src/lm/neural/__init__.py
+  s_6c5628f13414b0::t_6fa48877ef8fa0 8-15
+  s_6c5628f13414b0::t_79995a768964d7 5-7
+  s_6c5628f13414b0::t_644c443286167d 16-18
+  s_6c5628f13414b0::t_96dc414afb4f98 1-4,19-28
+src/README.md
+  s_6c5628f13414b0::t_cacadba51607a3 16-23,63,86,121-122
+src/lm/neural/lstm/__init__.py
+  s_6c5628f13414b0::t_4e2e7b649c133f 1-3
+src/lm/neural/ffnn/__init__.py
+  s_6c5628f13414b0::t_59cdea660bb07e 1-3
+src/lm/neural/trainer.py
+  s_6c5628f13414b0::t_6fa48877ef8fa0 3
+src/lm/controller.py
+  s_6c5628f13414b0::t_6fa48877ef8fa0 19-20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "47ba4c0547d36d1761c08f97896b89c60b807ade",
+  "prompts": {},
+  "sessions": {
+    "s_6c5628f13414b0": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "d4a2c065-d5bf-48e9-b598-471c4b404eb7",
+        "model": "copilot/claude-opus-5.5"
+      },
+      "human_author": "AxleAddict <akshayjoish28@gmail.com>"
+    }
+  }
+}

@@ -16,8 +16,8 @@ import torch
 import yaml
 
 from .data import Corpus, Vocab, load_corpus, make_loader
-from .models import build_model, count_parameters
-from .trainer import Trainer, TrainConfig, get_device, set_seed
+from .neural import build_model, count_parameters
+from .neural.trainer import Trainer, TrainConfig, get_device, set_seed
 
 
 class LanguageModelController:

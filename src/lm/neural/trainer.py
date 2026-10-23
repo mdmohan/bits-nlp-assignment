@@ -1,6 +1,6 @@
 """Model-agnostic training and evaluation for next-word prediction.
 
-Works with any model that follows the contract in models.py and any DataLoader that yields
+Works with any model that follows the contract in lm/neural/__init__.py and any DataLoader that yields
 (inputs, targets) id tensors of shape (batch, seq_len), with padding marked by `pad_id`.
 """
 

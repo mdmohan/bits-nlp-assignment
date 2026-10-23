@@ -13,10 +13,14 @@ source_code/
 ├── configs/
 │   └── brown.yaml         # Brown press genres: FFNN vs LSTM, 3 seeds
 ├── lm/
-│   ├── data.py            # dataset loaders, Corpus, Vocab, batching
-│   ├── models.py          # FeedForwardLM, LSTMLM, model registry
-│   ├── trainer.py         # generic training loop, evaluation, early stopping, seeding
-│   └── controller.py      # runs models x seeds on one dataset and saves results
+│   ├── data.py            # dataset loaders, Corpus, Vocab, batching (shared by all models)
+│   ├── controller.py      # runs models x seeds on one dataset and saves results
+│   ├── neural/
+│   │   ├── __init__.py    # neural model registry (MODELS, build_model)
+│   │   ├── trainer.py     # training loop, evaluation, early stopping, seeding
+│   │   ├── ffnn/          # FeedForwardLM
+│   │   └── lstm/          # LSTMLM
+│   └── statistical/       # count-based models (n-gram etc.)
 └── results/<experiment>/  # created by run.py
 ```
 
@@ -56,7 +60,7 @@ writes results to `results/<name>/`.
 ```python
 from lm.data import load_corpus
 from lm.controller import LanguageModelController
-from lm.trainer import TrainConfig
+from lm.neural.trainer import TrainConfig
 
 corpus = load_corpus("brown", categories=["news", "editorial", "reviews"])
 controller = LanguageModelController(corpus, min_freq=2, batch_size=32, output_dir="results/notebook")
@@ -79,7 +83,7 @@ Each experiment is one YAML file. `configs/brown.yaml`:
 | `data.params` | Arguments passed to the loader |
 | `vocab.min_freq` | Training words seen fewer times become `<unk>` |
 | `vocab.max_size` | Optional cap on vocabulary size |
-| `models` | List of `{name, params}`; `name` is a key of `MODELS` in `lm/models.py` |
+| `models` | List of `{name, params}`; `name` is a key of `MODELS` in `lm/neural/__init__.py` |
 | `training` | `batch_size`, `epochs`, `lr`, `grad_clip`, `weight_decay`, `patience` |
 
 ### Available datasets
@@ -114,7 +118,8 @@ run with `HF_HUB_DISABLE_XET=1`.
 (each a list of sentences, each sentence a list of tokens) and add it to `LOADERS`.
 Use `split_documents(...)` if the data is not already split.
 
-**New model:** write an `nn.Module` in `lm/models.py` with this contract and add it to `MODELS`:
+**New neural model:** add a subpackage under `lm/neural/` (like `ffnn/`) with an `nn.Module`
+that follows this contract, and add it to `MODELS` in `lm/neural/__init__.py`:
 
 ```python
 model = MyModel(vocab_size, pad_id, **params)

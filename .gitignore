@@ -3,6 +3,12 @@ __pycache__/
 *.pyc
 .venv/
 .codesight/
-
+*.txt
+*.db
+*.tgz
+*.zip
+*.gz
+*.xml
 # Model checkpoints are large and reproducible with run.py
 *.pt
+.ipynb_checkpoints

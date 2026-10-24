@@ -1,0 +1,133 @@
+# Candidate corpus registry for the Group 1 language-modelling experiments.
+# `download` is read by data_download.py; the other fields document the data.
+manifest_version: 1
+
+corpora:
+  brown:
+    title: Brown Corpus
+    status: candidate
+    language: English
+    domain: Mixed genres of American English prose
+    source:
+      provider: NLTK Data
+      url: https://www.nltk.org/nltk_data/
+      package: brown
+    version: NLTK data package; record the download date and NLTK version used.
+    license: Check the upstream corpus and NLTK package terms before redistribution.
+    limitations: Historical corpus; genre and vocabulary may differ from contemporary text.
+    download:
+      type: nltk
+      package: brown
+
+  gutenberg:
+    title: Project Gutenberg corpus (NLTK collection)
+    status: candidate
+    language: English
+    domain: Public-domain books and literary prose
+    source:
+      provider: NLTK Data
+      url: https://www.nltk.org/nltk_data/
+      package: gutenberg
+    version: NLTK data package; record the download date and NLTK version used.
+    license: Verify the status and terms for each included book, including the country of use.
+    limitations: Books are not independent samples from a single writing domain.
+    download:
+      type: nltk
+      package: gutenberg
+
+  webtext:
+    title: NLTK WebText corpus
+    status: candidate
+    language: English
+    domain: Informal web text
+    source:
+      provider: NLTK Data
+      url: https://www.nltk.org/nltk_data/
+      package: webtext
+    version: NLTK data package; record the download date and NLTK version used.
+    license: Check the upstream corpus and NLTK package terms before redistribution.
+    limitations: Small, heterogeneous set of web documents; inspect content before use.
+    download:
+      type: nltk
+      package: webtext
+
+  inaugural:
+    title: US Presidential Inaugural Addresses (NLTK collection)
+    status: candidate
+    language: English
+    domain: Formal political speeches
+    source:
+      provider: NLTK Data
+      url: https://www.nltk.org/nltk_data/
+      package: inaugural
+    version: NLTK data package; record the download date and NLTK version used.
+    license: Check the upstream corpus and NLTK package terms before redistribution.
+    limitations: Narrow genre and strong historical/time-period effects.
+    download:
+      type: nltk
+      package: inaugural
+
+  reuters:
+    title: Reuters-21578 corpus (NLTK collection)
+    status: candidate
+    language: English
+    domain: Newswire
+    source:
+      provider: NLTK Data
+      url: https://www.nltk.org/nltk_data/
+      package: reuters
+    version: NLTK data package; record the download date and NLTK version used.
+    license: Check the upstream corpus and NLTK package terms before redistribution.
+    limitations: Newswire domain; source documents may have collection-specific structure.
+    download:
+      type: nltk
+      package: reuters
+
+  ptb:
+    title: Penn Treebank (NLTK package)
+    status: candidate
+    language: English
+    domain: Edited news text
+    source:
+      provider: NLTK Data
+      url: https://www.nltk.org/nltk_data/
+      package: ptb
+    version: NLTK data package; record the download date and NLTK version used.
+    license: Check the upstream corpus and NLTK package terms before redistribution.
+    limitations: Treebank text is preprocessed and may contain tokenization conventions.
+    download:
+      type: nltk
+      package: ptb
+
+# URL-based corpus example (copy and fill in when choosing a direct downloadable file):
+#   my-url-corpus:
+#     title: Descriptive dataset title
+#     status: candidate
+#     language: English
+#     domain: Describe the text domain
+#     source:
+#       provider: Publisher or repository name
+#       url: https://example.org/dataset
+#     version: Dataset release or revision
+#     license: License name and link; verify redistribution terms
+#     accessed: YYYY-MM-DD
+#     limitations: Known sampling or coverage limitations
+#     download:
+#       type: url
+#       url: https://example.org/files/corpus.zip
+#       filename: corpus.zip       # optional; defaults to the URL filename
+#       sha256: ...                # optional; checked when provided
+
+# For the corpus you select, add these optional fields as you collect them.
+# They document the dataset and experiment; data_download.py does not consume them.
+#   version: Release/tag or NLTK package revision
+#   accessed_on: YYYY-MM-DD
+#   license_url: https://example.org/license
+#   files: [{path: ..., sha256: ..., bytes: ...}]
+#   document_count: ...
+#   sentence_count: ...
+#   token_count: ...
+#   preprocessing: Describe cleaning, sentence splitting, and tokenization.
+#   split: {unit: document, test_ratio: 0.2, seed: 55}
+#   leakage_checks: Describe exact/near-duplicate checks across train and test.
+#   evaluation: Record which models/metrics were used to compare this corpus.

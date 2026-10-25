@@ -24,7 +24,7 @@ data:
 #     split_seed: 42
 
 vocab:
-  min_freq: 2                 # training words seen once become <unk>
+  min_freq: 1                 # training words seen once become <unk>
 
 models:
   - name: ffnn

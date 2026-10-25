@@ -1,5 +1,6 @@
 """Load pipeline split files and prepare them for the neural language models."""
 
+import math
 import random
 from collections import Counter
 from dataclasses import dataclass
@@ -34,14 +35,38 @@ class Corpus:
         return stats
 
 
-def load_corpus_files(train: str | Path, valid: str | Path, test: str | Path) -> Corpus:
-    """Read the pipeline's pre-split files (one whitespace-tokenized sentence per line)."""
+def load_corpus_files(
+    train: str | Path,
+    valid: str | Path,
+    test: str | Path,
+    train_percent: float = 100,
+) -> Corpus:
+    """Read the split files, optionally using the first percentage of train sentences."""
+    if not 0 < train_percent <= 100:
+        raise ValueError("train_percent must be greater than 0 and at most 100")
 
-    def read(path: str | Path) -> list[Sentence]:
+    def read(path: str | Path, limit: int | None = None) -> list[Sentence]:
         with Path(path).open(encoding="utf-8") as handle:
-            return [line.split() for line in handle if line.strip()]
+            sentences = []
+            for line in handle:
+                if line.strip():
+                    sentences.append(line.split())
+                    if limit is not None and len(sentences) >= limit:
+                        break
+            return sentences
 
-    return Corpus(read(train), read(valid), read(test))
+    train_path = Path(train)
+    train_limit = None
+    if train_percent < 100:
+        with train_path.open(encoding="utf-8") as handle:
+            total_train = sum(1 for line in handle if line.strip())
+        train_limit = math.ceil(total_train * train_percent / 100)
+        print(
+            f"train subset: using first {train_percent:g}% "
+            f"({train_limit:,}/{total_train:,} sentences)"
+        )
+
+    return Corpus(read(train_path, train_limit), read(valid), read(test))
 
 
 # ---------------------------------------------------------------- vocabulary
@@ -55,6 +80,18 @@ class Vocab:
         words = [word for word, count in counts.most_common(max_size) if count >= min_freq]
         self.itos = [PAD, UNK, BOS, EOS] + words
         self.stoi = {word: index for index, word in enumerate(self.itos)}
+
+        train_tokens = sum(counts.values())
+        retained_tokens = sum(counts[word] for word in words)
+        print(
+            "vocab: "
+            f"train_tokens={train_tokens:,} "
+            f"train_types={len(counts):,} "
+            f"retained_words={len(words):,} "
+            f"vocab_size={len(self):,} (includes {len((PAD, UNK, BOS, EOS))} special tokens) "
+            f"min_freq={min_freq} max_size={'unlimited' if max_size is None else max_size} "
+            f"train_tokens_to_unk={train_tokens - retained_tokens:,}"
+        )
 
     def __len__(self):
         return len(self.itos)

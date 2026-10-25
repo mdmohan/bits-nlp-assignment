@@ -57,11 +57,30 @@ class Trainer:
         num_tokens = (targets != self.pad_id).sum().item()
         return total_nll, num_tokens
 
-    def train_epoch(self, loader) -> float:
+    @staticmethod
+    def _log_batch_progress(phase, batch_idx, total_batches, started_at, total_nll, total_tokens):
+        # Keep logs readable on large corpora while still showing regular progress.
+        update_every = max(1, math.ceil(total_batches / 20))
+        if batch_idx != 1 and batch_idx != total_batches and batch_idx % update_every:
+            return
+
+        elapsed = time.perf_counter() - started_at
+        eta = elapsed / batch_idx * (total_batches - batch_idx)
+        running_ppl = math.exp(total_nll / total_tokens) if total_tokens else float("nan")
+        percent = 100 * batch_idx / total_batches
+        print(
+            f"    {phase}: batch {batch_idx:,}/{total_batches:,} ({percent:5.1f}%) "
+            f"running ppl {running_ppl:8.2f} | elapsed {elapsed:.1f}s | eta {eta:.1f}s",
+            flush=True,
+        )
+
+    def train_epoch(self, loader, progress_label: str = "train") -> float:
         """One pass over the training data; returns the training perplexity."""
         self.model.train()
         total_nll, total_tokens = 0.0, 0
-        for inputs, targets in loader:
+        total_batches = len(loader)
+        started_at = time.perf_counter()
+        for batch_idx, (inputs, targets) in enumerate(loader, start=1):
             nll, num_tokens = self._batch_loss(inputs, targets)
             self.optimizer.zero_grad()
             (nll / num_tokens).backward()
@@ -69,17 +88,25 @@ class Trainer:
             self.optimizer.step()
             total_nll += nll.item()
             total_tokens += num_tokens
+            self._log_batch_progress(
+                progress_label, batch_idx, total_batches, started_at, total_nll, total_tokens
+            )
         return math.exp(total_nll / total_tokens)
 
     @torch.no_grad()
-    def evaluate(self, loader) -> dict:
+    def evaluate(self, loader, progress_label: str = "eval") -> dict:
         """Corpus perplexity = exp(sum of token NLL / number of predicted tokens, incl. </s>)."""
         self.model.eval()
         total_nll, total_tokens = 0.0, 0
-        for inputs, targets in loader:
+        total_batches = len(loader)
+        started_at = time.perf_counter()
+        for batch_idx, (inputs, targets) in enumerate(loader, start=1):
             nll, num_tokens = self._batch_loss(inputs, targets)
             total_nll += nll.item()
             total_tokens += num_tokens
+            self._log_batch_progress(
+                progress_label, batch_idx, total_batches, started_at, total_nll, total_tokens
+            )
         return {
             "nll": total_nll / total_tokens,
             "perplexity": math.exp(total_nll / total_tokens),
@@ -93,8 +120,10 @@ class Trainer:
 
         for epoch in range(1, self.config.epochs + 1):
             start = time.perf_counter()
-            train_ppl = self.train_epoch(train_loader)
-            valid_ppl = self.evaluate(valid_loader)["perplexity"]
+            train_ppl = self.train_epoch(train_loader, f"train epoch {epoch}/{self.config.epochs}")
+            valid_ppl = self.evaluate(
+                valid_loader, f"valid epoch {epoch}/{self.config.epochs}"
+            )["perplexity"]
             seconds = time.perf_counter() - start
 
             history.append({"epoch": epoch, "train_ppl": train_ppl, "valid_ppl": valid_ppl, "seconds": seconds})

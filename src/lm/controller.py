@@ -57,9 +57,9 @@ class LanguageModelController:
         train_seconds = time.perf_counter() - start
 
         start = time.perf_counter()
-        test = trainer.evaluate(self.test_loader)
+        test = trainer.evaluate(self.test_loader, "test")
         test_seconds = time.perf_counter() - start
-        valid = trainer.evaluate(self.valid_loader)
+        valid = trainer.evaluate(self.valid_loader, "valid")
 
         result = {
             "model": model_name,
@@ -83,8 +83,11 @@ class LanguageModelController:
         return result
 
 
-def run_from_config(config_path: str) -> pd.DataFrame:
+def run_from_config(config_path: str, train_percent: float = 100) -> pd.DataFrame:
     """Run every model in a YAML config for every seed; save per-run and summary tables."""
+    if not 0 < train_percent <= 100:
+        raise ValueError("train_percent must be greater than 0 and at most 100")
+
     config_path = Path(config_path).expanduser().resolve()
     config = yaml.safe_load(config_path.read_text())
     output_dir = Path(config.get("output_dir", "results")) / config["name"]
@@ -126,6 +129,7 @@ def run_from_config(config_path: str) -> pd.DataFrame:
         corpus_dir / "train.txt",
         corpus_dir / "valid.txt",
         corpus_dir / "test.txt",
+        train_percent=train_percent,
     )
     if data_config.get("lowercase", True):
         corpus = corpus.lowercase()
@@ -137,6 +141,8 @@ def run_from_config(config_path: str) -> pd.DataFrame:
         device=config.get("device", "auto"),
         output_dir=output_dir,
     )
+    controller.data_stats["train_percent"] = train_percent
+    config["train_percent"] = train_percent
     train_config = TrainConfig(**training)
 
     results = [
@@ -144,6 +150,8 @@ def run_from_config(config_path: str) -> pd.DataFrame:
         for model in config["models"]
         for seed in config.get("seeds", [42])
     ]
+    for result in results:
+        result["train_percent"] = train_percent
 
     runs = pd.DataFrame(results)
     summary = runs.groupby("model")[["valid_ppl", "test_ppl", "train_seconds", "test_seconds"]].agg(["mean", "std"])

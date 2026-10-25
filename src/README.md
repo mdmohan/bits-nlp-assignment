@@ -48,7 +48,7 @@ and `test.txt` files.
 
 ## Running
 
-From the `source_code` directory:
+From the `src` directory:
 
 ```sh
 ~/.venvs/nlp-lm/bin/python -u run.py configs/brown.yaml
@@ -56,6 +56,43 @@ From the `source_code` directory:
 
 This trains every model listed in the config for every seed, prints per-epoch progress, and
 writes results to `results/<name>/`.
+
+For a quicker run, pass `--train-percent` to use only the first portion of the training split;
+validation and test data remain complete:
+
+```sh
+python -u run.py configs/brown.yaml --train-percent 10
+```
+
+The default is `100`, which uses all training sentences. The chosen percentage is recorded in
+the output config, data statistics, and run table.
+
+### Inspecting a saved run
+
+From the repository root, load a result folder and select one of its saved checkpoints:
+
+```sh
+python src/lm/cli.py load src/results/brown_press_neural --checkpoint ffnn_seed13.pt
+```
+
+Replace `src/results/brown_press_neural` with the result folder created by your training run.
+
+Inside the prompt, use `vocab [N]` for the most frequent vocabulary entries, `stats` for
+split/OOV information, or enter text (or `predict TEXT`) to see the loaded neural model's
+next-word guesses. `evaluate FILE bi|tri` evaluates both an unsmoothed count n-gram model and
+the loaded neural model on that context window. It reads counts from the configured training
+split; pass `--train PATH` to `load` if that split has moved. `rare-check bi|tri CSV` scores
+the selected rare-sequence rows, weighted by their CSV `test_count`. An unsmoothed n-gram has
+infinite perplexity if any evaluated event has zero probability; the CLI also reports its
+finite-event perplexity and coverage.
+```text
+lm> vocab 10
+lm> stats
+lm> The cat sat
+lm> evaluate data/processed/brown/test.txt tri
+lm> rare-check bi data/processed/brown/rare-ngrams.csv
+lm> quit
+```
 
 ### Using it from Python / a notebook
 

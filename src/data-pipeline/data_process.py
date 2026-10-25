@@ -1,26 +1,51 @@
 import argparse
+import re
 import shelve
 from pathlib import Path
 from corpus_parser import create_parser
 from log_utils import display_path
 
 
-def collect_files(corpus_path: Path, extension: str) -> list[Path]:
-    """Resolves single file orRecursively gathers matching files from directory."""
+def collect_files(
+    corpus_path: Path,
+    extension: str,
+    corpus_type: str = "",
+    ignored_files: list[str] | None = None,
+) -> list[Path]:
+    """Resolve one file or recursively gather files appropriate for the corpus."""
     if corpus_path.is_file():
-        return [corpus_path]
-    if corpus_path.is_dir():
-        # Ensure extension starts with a dot
+        files = [corpus_path]
+    elif corpus_path.is_dir():
+        ext = None
         if extension:
             ext = extension if extension.startswith('.') else f".{extension}"
             files = sorted(path for path in corpus_path.rglob(f"*{ext}") if path.is_file())
+        elif corpus_type.casefold() == "brown":
+            # NLTK Brown documents are extensionless files like ca01; cats.txt
+            # and CONTENTS are package metadata, not corpus documents.
+            files = sorted(
+                path
+                for path in corpus_path.rglob("*")
+                if path.is_file() and re.fullmatch(r"c[a-r]\d{2}(?:\.txt)?", path.name)
+            )
         else:
             files = sorted(path for path in corpus_path.rglob("*") if path.is_file())
         
-        if not files:
-            raise FileNotFoundError(f"No files matching '{ext}' found in {corpus_path}")
-        return files
-    raise FileNotFoundError(f"Path does not exist: {corpus_path}")
+    else:
+        raise FileNotFoundError(f"Path does not exist: {corpus_path}")
+
+    ignored = {item.replace("\\", "/").strip("/") for item in (ignored_files or [])}
+    if ignored:
+        root = corpus_path if corpus_path.is_dir() else corpus_path.parent
+        files = [
+            path for path in files
+            if path.name not in ignored
+            and path.relative_to(root).as_posix() not in ignored
+        ]
+    if not files:
+        description = f"*{ext}" if corpus_path.is_dir() and extension else "files"
+        raise FileNotFoundError(f"No {description} found after applying ignore-files in {corpus_path}")
+    return files
 
 
 def main():
@@ -60,6 +85,13 @@ def main():
         action="store_true",
         help="Print one progress line per source document.",
     )
+    parser_cli.add_argument(
+        "--ignore-file",
+        action="append",
+        default=[],
+        metavar="NAME_OR_PATH",
+        help="File name or path relative to the input directory to skip; repeat as needed.",
+    )
 
     args = parser_cli.parse_args()
     
@@ -68,7 +100,7 @@ def main():
     corpus_parser = create_parser(args.corpus_type)
     
     # 2. Collect input files
-    target_files = collect_files(args.corpus_path, args.ext)
+    target_files = collect_files(args.corpus_path, args.ext, args.corpus_type, args.ignore_file)
     print(f"Found {len(target_files)} file(s) to process.")
 
     total_paragraphs = 0
@@ -82,9 +114,6 @@ def main():
             sentence_dump = open(args.dump_path, "w", encoding="utf-8")
 
         for idx, file_path in enumerate(target_files, start=1):
-            if 'README' in str(file_path) or 'CONTENT' in str(file_path):
-                print("Skip", file_path.name)
-                continue
             key = str(file_path.resolve())
             
             try:

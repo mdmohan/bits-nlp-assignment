@@ -84,6 +84,33 @@ def load_corpus_config(config_path: Path, corpus: str) -> dict:
     return entry
 
 
+def configured_extract_path(entry: dict, package: str | None = None) -> Path:
+    """Return a safe manifest path to the extracted corpus, relative to raw root."""
+    value = entry.get("extract-path")
+    if value is None:
+        value = f"corpora/{package}" if package else None
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("Corpus manifest extract-path must be a non-empty relative path")
+    path = Path(value)
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"Unsafe corpus extract-path in manifest: {value!r}")
+    return path
+
+
+def safe_extract_zip(archive_path: Path, target_dir: Path) -> None:
+    """Extract a ZIP after rejecting members that could escape the target root."""
+    target_root = target_dir.resolve()
+    with zipfile.ZipFile(archive_path) as archive:
+        for member in archive.infolist():
+            member_path = Path(member.filename.replace("\\", "/"))
+            if member_path.is_absolute() or ".." in member_path.parts:
+                raise ValueError(f"Unsafe path in corpus archive: {member.filename}")
+            destination = (target_root / member_path).resolve()
+            if not destination.is_relative_to(target_root):
+                raise ValueError(f"Unsafe path in corpus archive: {member.filename}")
+        archive.extractall(target_root)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -161,15 +188,24 @@ def main() -> int:
             package = download.get("package")
             if not isinstance(package, str) or not package:
                 raise ValueError(f"Corpus '{corpus}' has NLTK download type but no package")
-            package_dir = output_root / "corpora" / package
+            package_dir = output_root / configured_extract_path(entry, package)
             package_zip = output_root / "corpora" / f"{package}.zip"
-            if package_dir.is_dir() or zipfile.is_zipfile(package_zip):
-                print(f"NLTK corpus package '{package}' already exists under: {display_path(output_root / 'corpora')}")
+            if not package_dir.is_dir() and zipfile.is_zipfile(package_zip):
+                safe_extract_zip(package_zip, output_root)
+            if package_dir.is_dir():
+                print(f"NLTK corpus package '{package}' is available at: {display_path(package_dir)}")
             else:
                 succeeded = nltk.download(package, download_dir=str(output_root))
                 if not succeeded:
                     raise ValueError(f"NLTK could not download corpus package: {package}")
-                print(f"Downloaded NLTK corpus package '{package}' under: {display_path(output_root / 'corpora')}")
+                # Some NLTK download states leave the archive without unpacking it.
+                if not package_dir.is_dir() and zipfile.is_zipfile(package_zip):
+                    safe_extract_zip(package_zip, output_root)
+                if not package_dir.is_dir():
+                    raise FileNotFoundError(
+                        f"NLTK download completed but the configured extract path was not found: {package_dir}"
+                    )
+                print(f"Downloaded NLTK corpus package '{package}' to: {display_path(package_dir)}")
         else:
             raise ValueError(
                 f"Corpus '{corpus}' has unsupported download type {source_type!r}; use 'nltk' or 'url'"

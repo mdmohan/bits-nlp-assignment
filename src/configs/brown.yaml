@@ -12,7 +12,7 @@ data:
   input: data/raw                # raw-data root
   output: data/processed         # processed-data root
   manifest: src/data-pipeline/data.yaml
-  clean: true
+  clean: false                  # BrownParser strips POS tags; source records have no .txt extension.
   rare_check: true
 
 # data:

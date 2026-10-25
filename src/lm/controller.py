@@ -83,13 +83,40 @@ class LanguageModelController:
         return result
 
 
-def run_from_config(config_path: str, train_percent: float = 100) -> pd.DataFrame:
-    """Run every model in a YAML config for every seed; save per-run and summary tables."""
+def run_from_config(
+    config_path: str,
+    train_percent: float = 100,
+    algorithm: str | None = None,
+    seed_override: int | None = None,
+) -> pd.DataFrame:
+    """Run configured models/seeds, with optional single-model and seed overrides."""
     if not 0 < train_percent <= 100:
         raise ValueError("train_percent must be greater than 0 and at most 100")
 
     config_path = Path(config_path).expanduser().resolve()
     config = yaml.safe_load(config_path.read_text())
+    configured_models = config.get("models", [])
+    if not configured_models:
+        raise ValueError("The config must define at least one model under 'models'.")
+    if algorithm is None:
+        selected_models = configured_models
+    else:
+        matches = [
+            model for model in configured_models
+            if str(model.get("name", "")).casefold() == algorithm.casefold()
+        ]
+        if not matches:
+            available = ", ".join(str(model.get("name", "<unnamed>")) for model in configured_models)
+            raise ValueError(f"Unknown algorithm '{algorithm}'. Configured algorithms: {available}")
+        selected_models = matches
+    configured_seeds = config.get("seeds", [42])
+    selected_seeds = [seed_override] if seed_override is not None else configured_seeds
+    if not selected_seeds:
+        raise ValueError("The config must define at least one seed, or provide --seed.")
+    # Save the effective selection alongside results so the output config records
+    # precisely which models and seeds produced this run.
+    config["models"] = selected_models
+    config["seeds"] = selected_seeds
     output_dir = Path(config.get("output_dir", "results")) / config["name"]
 
     data_config = config["data"]
@@ -145,10 +172,16 @@ def run_from_config(config_path: str, train_percent: float = 100) -> pd.DataFram
     config["train_percent"] = train_percent
     train_config = TrainConfig(**training)
 
+    print(
+        "Run selection: "
+        + ", ".join(str(model.get("name")) for model in selected_models)
+        + f" | seeds {', '.join(str(seed) for seed in selected_seeds)}",
+        flush=True,
+    )
     results = [
         controller.run(model["name"], model.get("params", {}), train_config, seed)
-        for model in config["models"]
-        for seed in config.get("seeds", [42])
+        for model in selected_models
+        for seed in selected_seeds
     ]
     for result in results:
         result["train_percent"] = train_percent

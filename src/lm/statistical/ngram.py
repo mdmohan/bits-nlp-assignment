@@ -23,7 +23,8 @@ Usage
     lm = NgramLM(order=3, vocab_size=len(vocab), bos=BOS_ID, eos=EOS_ID,
                  smoothing="kn").fit(encoded_train)
 
-    lm.token_logprobs(encoded_sentence)   # -> list of natural-log probs
+    # Pass content token IDs only; the model adds BOS/EOS for each sentence.
+    lm.token_logprobs(content_ids)        # -> list of natural-log probs
     lm.prob((w1, w2, w3))                 # -> P(w3 | w1 w2)
 
 Token accounting: a sentence ``w1 ... wT`` yields ``T + 1`` predictions
@@ -89,11 +90,11 @@ class NgramLM:
         return f"{self.order}-gram {label}"
 
     # ----------------------------------------------------------------- fit
-    def fit(self, encoded: list[list[int]]) -> "NgramLM":
-        """Accumulate counts for every order up to ``self.order``."""
+    def fit(self, encoded: Iterable[list[int]]) -> "NgramLM":
+        """Fit on content token IDs (without BOS/EOS) for every order up to this order."""
         t0 = time.perf_counter()
-        for n in range(1, self.order + 1):
-            for ids in encoded:
+        for ids in encoded:
+            for n in range(1, self.order + 1):
                 for g in ngrams(ids, n, self.bos, self.eos):
                     self.ngram_counts[n][g] += 1
                     ctx = g[:-1]
@@ -101,8 +102,8 @@ class NgramLM:
                     if n > 1:
                         self.cont_following[n][ctx].add(g[-1])
                         self.cont_preceding[n][g[1:]].add(g[0])
-            if n > 1:
-                self.cont_total[n] = len(self.ngram_counts[n])
+        for n in range(2, self.order + 1):
+            self.cont_total[n] = len(self.ngram_counts[n])
         self.unigram_total = sum(self.ngram_counts[1].values())
         self._alpha_cache.clear()
         self.train_seconds = time.perf_counter() - t0

@@ -18,6 +18,9 @@ corpora:
     download:
       type: nltk
       package: brown
+    extract-path: corpora/brown
+    ignore-files:
+      - cats.txt
 
   gutenberg:
     title: Project Gutenberg corpus (NLTK collection)
@@ -34,6 +37,9 @@ corpora:
     download:
       type: nltk
       package: gutenberg
+    extract-path: corpora/gutenberg
+    ignore-files:
+      - README
 
   webtext:
     title: NLTK WebText corpus
@@ -118,8 +124,7 @@ corpora:
 #       filename: corpus.zip       # optional; defaults to the URL filename
 #       sha256: ...                # optional; checked when provided
 
-# For the corpus you select, add these optional fields as you collect them.
-# They document the dataset and experiment; data_download.py does not consume them.
+# For the corpus you select, add these optional documentation fields as you collect them.
 #   version: Release/tag or NLTK package revision
 #   accessed_on: YYYY-MM-DD
 #   license_url: https://example.org/license
@@ -131,3 +136,5 @@ corpora:
 #   split: {unit: document, test_ratio: 0.2, seed: 55}
 #   leakage_checks: Describe exact/near-duplicate checks across train and test.
 #   evaluation: Record which models/metrics were used to compare this corpus.
+# `extract-path` and `ignore-files` are operational: the orchestrator uses them
+# to locate extracted content and exclude named files during loading.

@@ -41,7 +41,7 @@ python src/data-pipeline/data_pipeline.py \
   --corpus brown --in data.yaml --download
 ```
 
-When combined with processing stages, the pipeline downloads first and passes the downloaded corpus folder to cleaning or loading. NLTK package archives are extracted into `data/raw/corpora/<package>/` as needed. If you use `--split` or `--rare-check` with `--download`, include `--load` as well. `--out` controls processed outputs; `--download-out` controls the raw download location.
+When combined with processing stages, the pipeline downloads first and passes the downloaded corpus folder to cleaning or loading. NLTK ZIPs are extracted under the raw root when needed; the corpus folder is resolved using the manifest's `extract-path` (default: `corpora/<package>`). If you use `--split` or `--rare-check` with `--download`, include `--load` as well. `--out` controls processed outputs; `--download-out` controls the raw download location.
 
 ```bash
 python src/data-pipeline/data_pipeline.py \
@@ -59,7 +59,15 @@ python src/data-pipeline/data_download.py brown --conf data.yaml
 python src/data-pipeline/data_download.py webtext --out data/raw
 ```
 
-The old `--corpus NAME` spelling is still accepted. NLTK stores its package under `<out>/corpora/`. For a URL-based corpus, add a registry entry with `download.type: url` and `download.url`; optionally set `filename` and `sha256`. A URL must point directly to a downloadable file. Archives are saved but not extracted; extract them before passing their folder to the pipeline.
+The old `--corpus NAME` spelling is still accepted. NLTK stores its package under `<out>/corpora/`. For a URL-based corpus, add a registry entry with `download.type: url` and `download.url`; optionally set `filename`, `sha256`, and `extract-path` for ZIP content. A URL must point directly to a downloadable file. ZIPs are extracted when the download is combined with loading, or by the orchestrator when it finds a local archive.
+
+Corpus entries may also define `ignore-files` as file names or paths relative to the resolved corpus folder. The orchestrator forwards these entries to the loading stage, which excludes matching files before parsing. For example:
+
+```yaml
+extract-path: corpora/gutenberg
+ignore-files:
+  - README
+```
 
 Example command using a config file in another location:
 

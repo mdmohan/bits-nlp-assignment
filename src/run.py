@@ -28,5 +28,21 @@ if __name__ == "__main__":
         metavar="PERCENT",
         help="use the first PERCENT of train.txt sentences (default: 100)",
     )
+    parser.add_argument(
+        "--algorithm",
+        "--model",
+        dest="algorithm",
+        help="run one configured algorithm (for example: ffnn or lstm); default: all configured models",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        help="override configured seeds and run once with this seed",
+    )
     args = parser.parse_args()
-    run_from_config(args.config, train_percent=args.train_percent)
+    run_from_config(
+        args.config,
+        train_percent=args.train_percent,
+        algorithm=args.algorithm,
+        seed_override=args.seed,
+    )

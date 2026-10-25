@@ -9,6 +9,7 @@ import zipfile
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+from data_download import configured_extract_path, load_corpus_config, safe_extract_zip
 from database_integrity import database_files, verify_database_sha, write_database_sha
 from log_utils import display_path
 
@@ -89,6 +90,13 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATTERN",
         help="Regex to remove during cleaning; repeat for additional patterns.",
     )
+    parser.add_argument(
+        "--ignore-file",
+        action="append",
+        default=[],
+        metavar="NAME_OR_PATH",
+        help="File name or path to skip during loading; repeat for additional files.",
+    )
     return parser
 
 
@@ -137,23 +145,8 @@ def sentence_folder_from_input(input_path: Path | None, corpus: str) -> Path:
     raise FileNotFoundError(f"Input path does not exist: {display_path(input_path)}")
 
 
-def _safe_extract_zip(archive_path: Path, target_dir: Path) -> None:
-    target_root = target_dir.resolve()
-    with zipfile.ZipFile(archive_path) as archive:
-        for member in archive.infolist():
-            member_path = Path(member.filename.replace("\\", "/"))
-            if member_path.is_absolute() or ".." in member_path.parts:
-                raise ValueError(f"Unsafe path in corpus archive: {member.filename}")
-            destination = (target_root / member_path).resolve()
-            if not destination.is_relative_to(target_root):
-                raise ValueError(f"Unsafe path in corpus archive: {member.filename}")
-        archive.extractall(target_root)
-
-
 def downloaded_source_folder(corpus: str, config_path: Path, download_root: Path) -> Path:
     """Resolve the downloaded package/file to a folder consumable by data_process.py."""
-    from data_download import load_corpus_config
-
     entry = load_corpus_config(config_path, corpus)
     spec = entry["download"]
     corpus_dir = download_root / "corpora" / corpus
@@ -162,10 +155,10 @@ def downloaded_source_folder(corpus: str, config_path: Path, download_root: Path
         package = spec.get("package")
         if not isinstance(package, str) or not package:
             raise ValueError(f"Corpus '{corpus}' has NLTK download type but no package")
-        package_dir = download_root / "corpora" / package
+        package_dir = download_root / configured_extract_path(entry, package)
         archive_path = download_root / "corpora" / f"{package}.zip"
         if not package_dir.is_dir() and zipfile.is_zipfile(archive_path):
-            _safe_extract_zip(archive_path, download_root / "corpora")
+            safe_extract_zip(archive_path, download_root)
         if not package_dir.is_dir():
             raise FileNotFoundError(f"Downloaded NLTK package files were not found: {package_dir}")
         return package_dir
@@ -181,9 +174,15 @@ def downloaded_source_folder(corpus: str, config_path: Path, download_root: Path
         if not downloaded_file.is_file():
             raise FileNotFoundError(f"Downloaded corpus file was not found: {downloaded_file}")
         if zipfile.is_zipfile(downloaded_file):
+            relative_extract = entry.get("extract-path")
+            if relative_extract:
+                extracted_dir = download_root / configured_extract_path(entry)
+                safe_extract_zip(downloaded_file, download_root)
+                if extracted_dir.is_dir():
+                    return extracted_dir
             extracted_dir = corpus_dir / "extracted"
             extracted_dir.mkdir(parents=True, exist_ok=True)
-            _safe_extract_zip(downloaded_file, extracted_dir)
+            safe_extract_zip(downloaded_file, extracted_dir)
             return extracted_dir
         return corpus_dir
 
@@ -219,6 +218,12 @@ def run(args: argparse.Namespace) -> int:
         input_path = input_arg.resolve()
         if not input_path.is_file():
             raise FileNotFoundError(f"--download expects a YAML file for --in, not: {display_path(input_path)}")
+        manifest_entry = load_corpus_config(input_path, corpus)
+        manifest_ignored = manifest_entry.get("ignore-files", [])
+        if manifest_ignored:
+            if not isinstance(manifest_ignored, list) or any(not isinstance(item, str) for item in manifest_ignored):
+                raise ValueError(f"Corpus '{corpus}' ignore-files must be a list of file names or relative paths")
+            args.ignore_file = list(dict.fromkeys([*args.ignore_file, *manifest_ignored]))
         download_root = (
             args.download_out.expanduser().resolve()
             if args.download_out
@@ -305,6 +310,8 @@ def run(args: argparse.Namespace) -> int:
         ]
         if args.ext is not None:
             command.extend(("--ext", args.ext))
+        for ignored in args.ignore_file:
+            command.extend(("--ignore-file", ignored))
         if args.verbose:
             command.append("--verbose")
         command.append(str(source_folder))

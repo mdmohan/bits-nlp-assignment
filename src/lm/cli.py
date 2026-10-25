@@ -10,7 +10,6 @@ import json
 import math
 import shlex
 import sys
-from collections import Counter, defaultdict
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -22,6 +21,7 @@ if __package__ in (None, ""):
 
 from lm.data import BOS, EOS, PAD, UNK
 from lm.neural import build_model
+from lm.statistical.ngram import NgramLM
 from lm.neural.trainer import get_device
 
 
@@ -43,37 +43,36 @@ def iter_sentences(path: Path, lowercase: bool, percent: float = 100):
 
 
 class CountNGram:
-    """Unsmoothed maximum-likelihood n-gram counts over the training split."""
+    """Adapter for the shared unsmoothed NgramLM using the run's saved vocabulary."""
 
     def __init__(self, order: int, vocab: list[str], sentences: Iterable[list[str]]):
         self.order = order
         self.stoi = {word: index for index, word in enumerate(vocab)}
         self.itos = vocab
-        self.counts = Counter()
-        self.context_counts = Counter()
-        self.followers = defaultdict(Counter)
-        bos_id = self.stoi[BOS]
-        eos_id = self.stoi[EOS]
         unk_id = self.stoi[UNK]
 
-        for sentence_idx, sentence in enumerate(sentences, start=1):
-            ids = [self.stoi.get(word, unk_id) for word in sentence]
-            sequence = [bos_id] * (order - 1) + ids + [eos_id]
-            for end in range(order - 1, len(sequence)):
-                context = tuple(sequence[end - order + 1 : end])
-                target = sequence[end]
-                self.counts[context + (target,)] += 1
-                self.context_counts[context] += 1
-                self.followers[context][target] += 1
-            if sentence_idx % 1_000_000 == 0:
-                print(f"  counted training sentences: {sentence_idx:,}", flush=True)
+        def encoded_sentences():
+            for sentence_idx, sentence in enumerate(sentences, start=1):
+                if sentence_idx % 1_000_000 == 0:
+                    print(f"  encoded training sentences: {sentence_idx:,}", flush=True)
+                yield [self.stoi.get(word, unk_id) for word in sentence]
+
+        self.model = NgramLM(
+            order=order,
+            vocab_size=len(vocab),
+            bos=self.stoi[BOS],
+            eos=self.stoi[EOS],
+            smoothing="mle",
+        ).fit(encoded_sentences())
+        self.counts = self.model.ngram_counts[order]
 
     def score(self, context: tuple[int, ...], target: int) -> tuple[float, int | None]:
-        denominator = self.context_counts[context]
-        if not denominator:
-            return 0.0, None
-        probability = self.counts[context + (target,)] / denominator
-        predicted = self.followers[context].most_common(1)[0][0]
+        probability = self.model.prob(context + (target,))
+        followers = self.model.cont_following[self.order].get(context, ())
+        predicted = (
+            max(followers, key=lambda token: self.counts[context + (token,)])
+            if followers else None
+        )
         return probability, predicted
 
 
@@ -265,10 +264,25 @@ class LanguageModelCLI:
         self._summarize_metrics("Unsmoothed count n-gram", total, ngram_zero, ngram_nll, ngram_correct, ngram_covered)
         self._summarize_metrics("Loaded neural model (same context window)", total, neural_zero, neural_nll, int(neural_correct), total)
 
-    def rare_check(self, path: Path, order: int):
+    @staticmethod
+    def _parse_row_range(value: str | None, row_count: int) -> tuple[int, int]:
+        """Parse a zero-based, end-exclusive range such as 0-10 or 10-all."""
+        if value is None:
+            return 0, min(10, row_count)
+        try:
+            start_text, end_text = value.strip().lower().split("-", 1)
+            start = int(start_text)
+            end_text = end_text.strip().strip("() ")
+            end = row_count if end_text in {"all", "*"} else int(end_text)
+        except ValueError as exc:
+            raise ValueError("range must look like START-END, for example 0-10 or 10-all") from exc
+        if start < 0 or end < 0 or end < start:
+            raise ValueError("range indexes must be non-negative and END must be >= START")
+        return min(start, row_count), min(end, row_count)
+
+    def rare_check(self, path: Path, order: int, row_range: str | None = None):
         if not path.is_file():
             raise FileNotFoundError(f"Rare-sequence CSV not found: {path}")
-        ngram = self._ngram(order)
         records = []
         with path.open(encoding="utf-8-sig", newline="") as handle:
             for row in csv.DictReader(handle):
@@ -289,29 +303,25 @@ class LanguageModelCLI:
             print(f"No order-{order} sequences found in {path}")
             return
 
-        weighted_total = ngram_zero = ngram_correct = ngram_covered = 0
-        ngram_nll = neural_nll = 0.0
+        start, end = self._parse_row_range(row_range, len(records))
+        records = records[start:end]
+        if not records:
+            print(f"No order-{order} sequences in range {start}-{end} from {path}")
+            return
+
+        weighted_total = 0
+        neural_nll = 0.0
         contexts, targets, weights = [], [], []
-        predictions_to_show = []
         for words, weight in records:
             context_words, target_word = words[:-1], words[-1]
             context = tuple(self._map_word(word) for word in context_words)
             target = self._map_word(target_word)
-            probability, predicted = ngram.score(context, target)
             weighted_total += weight
-            if probability:
-                ngram_nll -= weight * math.log(probability)
-            else:
-                ngram_zero += weight
-            if predicted is not None:
-                ngram_covered += weight
-                ngram_correct += weight * (predicted == target)
             contexts.append(context)
             targets.append(target)
             weights.append(weight)
-            predictions_to_show.append((words, weight, predicted, probability))
 
-        neural_correct = neural_covered = neural_zero = 0
+        neural_correct = 0
         neural_predictions = []
         for start in range(0, len(contexts), 256):
             batch_contexts = contexts[start : start + 256]
@@ -320,22 +330,28 @@ class LanguageModelCLI:
             losses, predictions = self._neural_batch_scores(batch_contexts, batch_targets)
             neural_nll += sum(loss * weight for loss, weight in zip(losses, batch_weights))
             neural_correct += sum(weight for pred, target, weight in zip(predictions, batch_targets, batch_weights) if pred == target)
-            neural_covered += sum(batch_weights)
             neural_predictions.extend(zip(predictions, losses))
 
-        print(f"Rare CSV: {path}; matching {order}-gram rows: {len(records):,}")
+        print(
+            f"Rare CSV: {path}; selected {order}-gram rows {start}-{end} "
+            f"({len(records):,} rows)"
+        )
+        print(f"Selected model: {self.model_name} ({self.checkpoint_path.name})")
         print(f"CSV test-event weight: {weighted_total:,}")
-        self._summarize_metrics("Unsmoothed count n-gram (test_count weighted)", weighted_total, ngram_zero, ngram_nll, ngram_correct, ngram_covered)
-        self._summarize_metrics("Loaded neural model (test_count weighted)", weighted_total, neural_zero, neural_nll, neural_correct, neural_covered)
-        print("Examples (context | expected | count prediction (p) | neural prediction (p expected)):")
-        for idx, (words, weight, predicted, probability) in enumerate(predictions_to_show[:10]):
-            count_word = self.vocab[predicted] if predicted is not None else "<no-context>"
-            neural_id, neural_loss = neural_predictions[idx]
+        self._summarize_metrics(
+            "Selected model (test_count weighted)",
+            weighted_total,
+            0,
+            neural_nll,
+            neural_correct,
+            weighted_total,
+        )
+        print("Examples (context | actual next token | selected-model prediction | test_count):")
+        for idx, (words, weight) in enumerate(records):
+            neural_id, _ = neural_predictions[idx]
             neural_word = self.vocab[neural_id]
-            neural_probability = math.exp(-neural_loss)
             print(
-                f"  {' '.join(words[:-1])} | {words[-1]} | {count_word} ({probability:.4g}) | "
-                f"{neural_word} ({neural_probability:.4g}) | test_count={weight}"
+                f"  {' '.join(words[:-1])} | {words[-1]} | {neural_word} | test_count={weight}"
             )
 
     def help(self):
@@ -344,7 +360,7 @@ class LanguageModelCLI:
         print("  stats                     show vocabulary and OOV/split statistics")
         print("  predict TEXT              show the loaded neural model's next-word guesses")
         print("  evaluate FILE bi|tri      evaluate count and neural models on a text file")
-        print("  rare-check bi|tri CSV     score rare sequences from an analyzer CSV")
+        print("  rare-check bi|tri CSV [RANGE]  score CSV rows (default 0-10; use 0-all for all)")
         print("  help | quit")
 
     def shell(self):
@@ -382,9 +398,13 @@ class LanguageModelCLI:
                 elif command == "evaluate" and len(parts) == 3:
                     order = self._parse_order(parts[2])
                     self.evaluate_file(Path(parts[1]).expanduser(), order)
-                elif command == "rare-check" and len(parts) == 3:
+                elif command == "rare-check" and len(parts) in {3, 4}:
                     order = self._parse_order(parts[1])
-                    self.rare_check(Path(parts[2]).expanduser(), order)
+                    self.rare_check(
+                        Path(parts[2]).expanduser(),
+                        order,
+                        parts[3] if len(parts) == 4 else None,
+                    )
                 else:
                     # Treat a plain line as a next-word prompt for quick interactive use.
                     self.predict(raw)

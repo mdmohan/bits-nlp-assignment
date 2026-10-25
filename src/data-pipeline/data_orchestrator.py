@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import shelve
 import subprocess
 import sys
 import zipfile
@@ -13,8 +14,7 @@ try:
 except ImportError:  # pragma: no cover - environment dependency check
     yaml = None
 
-from data_download import load_corpus_config
-from data_pipeline import _safe_extract_zip
+from data_download import configured_extract_path, load_corpus_config, safe_extract_zip
 from database_integrity import database_files, verify_database_sha
 from log_utils import display_path
 
@@ -67,10 +67,10 @@ def _manifest_source(corpus: str, manifest_path: Path, raw_root: Path) -> Path |
         package = spec.get("package")
         if not isinstance(package, str) or not package:
             raise ValueError(f"Corpus '{corpus}' has no NLTK package in the manifest")
-        package_dir = corpora_root / package
+        package_dir = raw_root / configured_extract_path(entry, package)
         archive_path = corpora_root / f"{package}.zip"
         if not package_dir.is_dir() and zipfile.is_zipfile(archive_path):
-            _safe_extract_zip(archive_path, corpora_root)
+            safe_extract_zip(archive_path, raw_root)
         return package_dir if package_dir.is_dir() else None
     if kind == "url":
         corpus_dir = corpora_root / corpus
@@ -85,11 +85,17 @@ def _manifest_source(corpus: str, manifest_path: Path, raw_root: Path) -> Path |
         if not archive_path.is_file():
             return None
         if zipfile.is_zipfile(archive_path):
+            if entry.get("extract-path"):
+                extracted_path = raw_root / configured_extract_path(entry)
+                if not extracted_path.is_dir():
+                    safe_extract_zip(archive_path, raw_root)
+                if extracted_path.is_dir():
+                    return extracted_path
             extracted = corpus_dir / "extracted"
             marker = corpus_dir / f".{filename}.extracted"
             if not marker.is_file() or marker.read_text(encoding="utf-8") != filename:
                 extracted.mkdir(parents=True, exist_ok=True)
-                _safe_extract_zip(archive_path, extracted)
+                safe_extract_zip(archive_path, extracted)
                 marker.write_text(filename, encoding="utf-8")
             return extracted
         return corpus_dir
@@ -98,7 +104,7 @@ def _manifest_source(corpus: str, manifest_path: Path, raw_root: Path) -> Path |
 
 def command_for_pipeline(corpus: str, output_root: Path, ratios: list[float], seed: int,
                          input_path: Path | None, clean: bool, rare_check: bool,
-                         verbose: bool) -> list[str]:
+                         verbose: bool, ignore_files: list[str]) -> list[str]:
     command = [
         sys.executable,
         str(SCRIPT_DIR / "data_pipeline.py"),
@@ -109,6 +115,8 @@ def command_for_pipeline(corpus: str, output_root: Path, ratios: list[float], se
         command.extend(("--in", str(input_path)))
     if clean:
         command.append("--clean")
+    for ignored in ignore_files:
+        command.extend(("--ignore-file", ignored))
     command.extend(("--load", "--split-ratios", *(str(ratio) for ratio in ratios), "--seed", str(seed)))
     if rare_check:
         command.append("--rare-check")
@@ -145,12 +153,23 @@ def run(args: argparse.Namespace) -> int:
         manifest_path = (PROJECT_DIR / manifest_path).resolve()
     if not manifest_path.is_file():
         raise FileNotFoundError(f"Corpus manifest does not exist: {display_path(manifest_path)}")
+    manifest_entry = load_corpus_config(manifest_path, corpus)
+    ignore_files = manifest_entry.get("ignore-files", [])
+    if not isinstance(ignore_files, list) or any(not isinstance(item, str) for item in ignore_files):
+        raise ValueError(f"Corpus '{corpus}' ignore-files must be a list of file names or relative paths")
 
     corpus_output = output_root / corpus
     database_path = corpus_output / f"{corpus}.db"
     if use_cached and database_files(database_path):
         try:
             verify_database_sha(database_path)
+            with shelve.open(str(database_path), flag="r") as cached_db:
+                cached_documents = len(cached_db)
+            if cached_documents < len(ratios):
+                raise ValueError(
+                    f"cached DB has {cached_documents} source documents; "
+                    f"{len(ratios)} are required by the configured split"
+                )
         except (OSError, ValueError) as exc:
             print(f"Cached database is not usable ({exc}); rebuilding.")
         else:
@@ -159,6 +178,8 @@ def run(args: argparse.Namespace) -> int:
                 "--corpus", corpus, "--in", str(database_path), "--out", str(output_root),
                 "--split-ratios", *(str(ratio) for ratio in ratios), "--seed", str(seed),
             ]
+            for ignored in ignore_files:
+                command.extend(("--ignore-file", ignored))
             if rare_check:
                 command.append("--rare-check")
             if verbose:
@@ -168,7 +189,9 @@ def run(args: argparse.Namespace) -> int:
 
     source_path = _manifest_source(corpus, manifest_path, raw_root)
     if source_path is not None:
-        command = command_for_pipeline(corpus, output_root, ratios, seed, source_path, clean, rare_check, verbose)
+        command = command_for_pipeline(
+            corpus, output_root, ratios, seed, source_path, clean, rare_check, verbose, ignore_files
+        )
         print(f"Using raw source: {display_path(source_path)}", flush=True)
         run_pipeline(command, f"{corpus}: prepare local source")
         return 0
@@ -182,6 +205,8 @@ def run(args: argparse.Namespace) -> int:
     ]
     if clean:
         command.append("--clean")
+    for ignored in ignore_files:
+        command.extend(("--ignore-file", ignored))
     command.extend(("--load", "--split-ratios", *(str(ratio) for ratio in ratios), "--seed", str(seed)))
     if rare_check:
         command.append("--rare-check")

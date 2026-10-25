@@ -57,6 +57,17 @@ From the `src` directory:
 This trains every model listed in the config for every seed, prints per-epoch progress, and
 writes results to `results/<name>/`.
 
+Run one configured algorithm with `--algorithm` (or its alias `--model`). Override the configured
+seed list with `--seed`; when used alone, the seed override still runs every configured algorithm:
+
+```sh
+python -u run.py configs/brown.yaml --algorithm ffnn --seed 13
+python -u run.py configs/brown.yaml --model lstm
+```
+
+With no overrides, the configured model and seed lists are used. The saved `config.yaml` records
+the effective model and seed selection for that output.
+
 For a quicker run, pass `--train-percent` to use only the first portion of the training split;
 validation and test data remain complete:
 
@@ -81,8 +92,9 @@ Inside the prompt, use `vocab [N]` for the most frequent vocabulary entries, `st
 split/OOV information, or enter text (or `predict TEXT`) to see the loaded neural model's
 next-word guesses. `evaluate FILE bi|tri` evaluates both an unsmoothed count n-gram model and
 the loaded neural model on that context window. It reads counts from the configured training
-split; pass `--train PATH` to `load` if that split has moved. `rare-check bi|tri CSV` scores
-the selected rare-sequence rows, weighted by their CSV `test_count`. An unsmoothed n-gram has
+split; pass `--train PATH` to `load` if that split has moved. `rare-check bi|tri CSV [RANGE]` scores
+the selected model on matching CSV rows, weighted by `test_count`; the range is zero-based and
+end-exclusive, defaults to `0-10`, and accepts `0-all` to use every matching row. An unsmoothed n-gram has
 infinite perplexity if any evaluated event has zero probability; the CLI also reports its
 finite-event perplexity and coverage.
 ```text
@@ -91,6 +103,8 @@ lm> stats
 lm> The cat sat
 lm> evaluate data/processed/brown/test.txt tri
 lm> rare-check bi data/processed/brown/rare-ngrams.csv
+lm> rare-check tri data/processed/brown/rare-ngrams.csv 10-100
+lm> rare-check tri data/processed/brown/rare-ngrams.csv 0-all
 lm> quit
 ```
 

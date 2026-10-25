@@ -5,12 +5,23 @@ device: auto          # auto -> cuda, then mps, then cpu
 seeds: [13, 42, 2026]
 
 data:
-  loader: brown
-  lowercase: true
-  params:
-    categories: [news, editorial, reviews]
-    ratios: [0.8, 0.1, 0.1]   # split by whole documents
-    split_seed: 42
+  corpus: brown
+  split_ratios: [0.8, 0.1, 0.1]  # train, validation, test
+  split_seed: 42
+  use_cached: true
+  input: data/raw                # raw-data root
+  output: data/processed         # processed-data root
+  manifest: src/data-pipeline/data.yaml
+  clean: true
+  rare_check: true
+
+# data:
+#   loader: brown
+#   lowercase: true
+#   params:
+#     categories: [news, editorial, reviews]
+#     ratios: [0.8, 0.1, 0.1]   # split by whole documents
+#     split_seed: 42
 
 vocab:
   min_freq: 2                 # training words seen once become <unk>

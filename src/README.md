@@ -13,7 +13,7 @@ source_code/
 ├── configs/
 │   └── brown.yaml         # Brown press genres: FFNN vs LSTM, 3 seeds
 ├── lm/
-│   ├── data.py            # dataset loaders, Corpus, Vocab, batching (shared by all models)
+│   ├── data.py            # pipeline split reader, Corpus, Vocab, batching
 │   ├── controller.py      # runs models x seeds on one dataset and saves results
 │   ├── neural/
 │   │   ├── __init__.py    # neural model registry (MODELS, build_model)
@@ -41,8 +41,10 @@ python3.12 -m venv ~/.venvs/nlp-lm
 Keep the virtual environment **outside OneDrive / cloud-synced folders**; on-demand file
 eviction makes imports hang.
 
-The Brown corpus is downloaded automatically by NLTK on first use (to `~/nltk_data`).
-To fetch it manually: `python -c "import nltk; nltk.download('brown')"`.
+Dataset download, cleaning, loading, and splitting run through the corpus pipeline
+configured in `data.corpus`. See `src/data-pipeline/README.md` for the manifest and
+pipeline behavior. The model loader consumes the resulting `train.txt`, `valid.txt`,
+and `test.txt` files.
 
 ## Running
 
@@ -58,11 +60,15 @@ writes results to `results/<name>/`.
 ### Using it from Python / a notebook
 
 ```python
-from lm.data import load_corpus
+from lm.data import load_corpus_files
 from lm.controller import LanguageModelController
 from lm.neural.trainer import TrainConfig
 
-corpus = load_corpus("brown", categories=["news", "editorial", "reviews"])
+corpus = load_corpus_files(
+    "data/processed/brown/train.txt",
+    "data/processed/brown/valid.txt",
+    "data/processed/brown/test.txt",
+)
 controller = LanguageModelController(corpus, min_freq=2, batch_size=32, output_dir="results/notebook")
 result = controller.run("lstm", {"hidden_dim": 256}, TrainConfig(epochs=10), seed=42)
 print(result["test_ppl"])
@@ -78,9 +84,14 @@ Each experiment is one YAML file. `configs/brown.yaml`:
 | `output_dir` | Root folder for results (default `results`) |
 | `device` | `auto` (CUDA, then Apple MPS, then CPU), or `cpu` / `cuda` / `mps` |
 | `seeds` | One full training run per model per seed |
-| `data.loader` | `brown`, `text_files` or `huggingface` (see below) |
-| `data.lowercase` | Lowercase all tokens (default `true`) |
-| `data.params` | Arguments passed to the loader |
+| `data.corpus` | Corpus key from `src/data-pipeline/data.yaml`; selects pipeline inputs and outputs |
+| `data.split_ratios` | Two ratios for train/test or three for train/valid/test; neural training needs three |
+| `data.split_seed` | Reproducible document-level split seed |
+| `data.input` | Raw-data root; corpus-specific location is resolved from the manifest |
+| `data.output` | Processed-data root; pipeline writes the split files under the corpus name |
+| `data.use_cached` | Reuse a database only when its checksum sidecar validates |
+| `data.clean`, `data.rare_check` | Enable optional cleaning and rare-sequence analysis |
+| `data.lowercase` | Lowercase tokens after reading the pipeline split files (default `true`) |
 | `vocab.min_freq` | Training words seen fewer times become `<unk>` |
 | `vocab.max_size` | Optional cap on vocabulary size |
 | `models` | List of `{name, params}`; `name` is a key of `MODELS` in `lm/neural/__init__.py` |
@@ -88,22 +99,9 @@ Each experiment is one YAML file. `configs/brown.yaml`:
 
 ### Available datasets
 
-| Loader | Params | Notes |
-|---|---|---|
-| `brown` | `categories` (list or omit for all 15 genres), `ratios`, `split_seed` | Split by whole Brown files (documents) |
-| `text_files` | `train`, `valid`, `test` paths | One sentence per line, whitespace-tokenised |
-| `huggingface` | `name`, `config`, `text_field`, `splits` | E.g. `name: Salesforce/wikitext`, `config: wikitext-2-raw-v1` |
-
-Example for WikiText-2:
-
-```yaml
-data:
-  loader: huggingface
-  params: {name: Salesforce/wikitext, config: wikitext-2-raw-v1}
-```
-
-If the Hugging Face download fails with `File reconstruction error: Byte range not sequential`,
-run with `HF_HUB_DISABLE_XET=1`.
+Corpus sources are listed in `src/data-pipeline/data.yaml`. Add or select a manifest
+entry there; the data orchestrator resolves local raw files or downloads them before
+the neural model reads its three split files.
 
 ### Available models
 
@@ -114,9 +112,9 @@ run with `HF_HUB_DISABLE_XET=1`.
 
 ## Extending
 
-**New dataset:** write a function in `lm/data.py` that returns a `Corpus(train, valid, test)`
-(each a list of sentences, each sentence a list of tokens) and add it to `LOADERS`.
-Use `split_documents(...)` if the data is not already split.
+**New dataset:** add its source and download metadata to the data-pipeline manifest,
+then use the orchestrator to create sentence-level split files. `lm/data.py` stays
+focused on reading those files and constructing the vocabulary and batches used by models.
 
 **New neural model:** add a subpackage under `lm/neural/` (like `ffnn/`) with an `nn.Module`
 that follows this contract, and add it to `MODELS` in `lm/neural/__init__.py`:

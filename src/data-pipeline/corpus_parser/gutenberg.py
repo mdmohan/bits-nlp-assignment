@@ -31,5 +31,4 @@ class GutenbergParser(BaseParser, corpus_name='gutenberg'):
                 'paragraph_text': paragraph,
                 'sentences': sentences,
             })
-        print (filepath, len(parsed_paragraphs))
         return parsed_paragraphs

@@ -23,6 +23,7 @@ from pathlib import Path
 
 from clean_data import TextCleaner
 from training_content_cleaner import TrainingContentCleaner
+from log_utils import display_path
 
 
 def _read_text(path: Path, encoding: str) -> tuple[str, str]:
@@ -271,8 +272,8 @@ def run(args: argparse.Namespace) -> int:
     print(f"Rejected at gates:     {len(quality_rejected):,}")
     print(f"Final cleaned files:   {len(final_documents):,}")
     print(f"Rejected in content:   {len(content_rejected):,}")
-    print(f"Clean text folder:     {output_dir}")
-    print(f"Audit reports folder:  {audit_dir}")
+    print(f"Clean text folder:     {display_path(output_dir)}")
+    print(f"Audit reports folder:  {display_path(audit_dir)}")
     print(
         "Encoding summary:     "
         + ", ".join(

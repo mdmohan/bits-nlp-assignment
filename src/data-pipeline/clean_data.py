@@ -8,6 +8,7 @@ from pathlib import Path
 
 from datasketch import MinHash, MinHashLSH
 from langdetect import DetectorFactory, LangDetectException, detect
+from log_utils import display_path
 
 
 # langdetect is non-deterministic unless its random seed is fixed. Reproducible
@@ -518,7 +519,7 @@ class TextCleaner:
         print(f"Total Processed: {len(pdf_dict)}")
         print(f"Clean Kept:      {len(clean_docs)}")
         print(f"Total Rejected:  {len(rejected_docs)}")
-        print(f"Audit Log:       Saved to {report_file.resolve()}\n")
+        print(f"Audit Log:       Saved to {display_path(report_file)}\n")
 
         return clean_docs, rejected_docs
 

@@ -19,6 +19,7 @@ except ImportError:  # pragma: no cover - user environment dependency check
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+from log_utils import display_path
 
 
 def download_url(
@@ -155,7 +156,7 @@ def main() -> int:
                 filename=download.get("filename"),
                 sha256=download.get("sha256"),
             )
-            print(f"Downloaded file to: {destination}")
+            print(f"Downloaded file to: {display_path(destination)}")
         elif source_type == "nltk":
             package = download.get("package")
             if not isinstance(package, str) or not package:
@@ -163,12 +164,12 @@ def main() -> int:
             package_dir = output_root / "corpora" / package
             package_zip = output_root / "corpora" / f"{package}.zip"
             if package_dir.is_dir() or zipfile.is_zipfile(package_zip):
-                print(f"NLTK corpus package '{package}' already exists under: {output_root / 'corpora'}")
+                print(f"NLTK corpus package '{package}' already exists under: {display_path(output_root / 'corpora')}")
             else:
                 succeeded = nltk.download(package, download_dir=str(output_root))
                 if not succeeded:
                     raise ValueError(f"NLTK could not download corpus package: {package}")
-                print(f"Downloaded NLTK corpus package '{package}' under: {output_root / 'corpora'}")
+                print(f"Downloaded NLTK corpus package '{package}' under: {display_path(output_root / 'corpora')}")
         else:
             raise ValueError(
                 f"Corpus '{corpus}' has unsupported download type {source_type!r}; use 'nltk' or 'url'"

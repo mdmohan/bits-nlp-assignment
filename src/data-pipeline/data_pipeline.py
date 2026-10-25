@@ -9,6 +9,9 @@ import zipfile
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+from database_integrity import database_files, verify_database_sha, write_database_sha
+from log_utils import display_path
+
 
 SRC_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = SRC_DIR.parent.parent
@@ -55,14 +58,23 @@ def build_parser() -> argparse.ArgumentParser:
         "--ext",
         help="Optional file extension filter for --load (for example: txt). If omitted, process all files.",
     )
-    parser.add_argument(
+    split_group = parser.add_mutually_exclusive_group()
+    split_group.add_argument(
         "--split",
         type=float,
         metavar="TEST_RATIO",
-        help="Split whole documents into train/test, for example --split 0.2.",
+        help="Legacy test fraction for train/test, for example --split 0.2.",
+    )
+    split_group.add_argument(
+        "--split-ratios",
+        type=float,
+        nargs="+",
+        metavar="RATIO",
+        help="Ratios summing to 1: train test, or train valid test.",
     )
     parser.add_argument("--rare-check", action="store_true", help="Analyze rare bigrams/trigrams.")
     parser.add_argument("--seed", type=int, default=42, help="Reproducible document-split seed.")
+    parser.add_argument("--verbose", action="store_true", help="Show per-document and sample details.")
     parser.add_argument(
         "--remove-word",
         action="append",
@@ -81,14 +93,25 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run_stage(command: list[str]) -> None:
-    print("\n$ " + " ".join(command), flush=True)
-    subprocess.run(command, cwd=PROJECT_DIR, check=True)
+    script_name = Path(command[1]).name if len(command) > 1 else "stage"
+    stage = {
+        "clean_text_corpus.py": "clean",
+        "data_process.py": "load",
+        "load_processed.py": "split",
+        "analyze_rare_ngrams.py": "rare-check",
+        "data_download.py": "download",
+    }.get(script_name, script_name)
+    print(f"\n== {stage} ==", flush=True)
+    try:
+        subprocess.run(command, cwd=PROJECT_DIR, check=True)
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f"{stage} stage failed (exit code {exc.returncode})") from exc
 
 
 def database_from_input(input_path: Path | None, corpus: str) -> Path:
     if input_path is None:
         return Path("data/processed") / corpus / f"{corpus}.db"
-    if input_path.is_file():
+    if input_path.is_file() or database_files(input_path):
         return input_path
     if input_path.is_dir():
         candidates = (
@@ -96,7 +119,7 @@ def database_from_input(input_path: Path | None, corpus: str) -> Path:
             input_path / corpus / f"{corpus}.db",
         )
         for candidate in candidates:
-            if candidate.exists():
+            if database_files(candidate):
                 return candidate
     raise FileNotFoundError(
         f"Could not find {corpus}.db from --in {input_path}; pass the DB file "
@@ -111,7 +134,7 @@ def sentence_folder_from_input(input_path: Path | None, corpus: str) -> Path:
         return input_path
     if input_path.is_file():
         return input_path.parent
-    raise FileNotFoundError(f"Input path does not exist: {input_path}")
+    raise FileNotFoundError(f"Input path does not exist: {display_path(input_path)}")
 
 
 def _safe_extract_zip(archive_path: Path, target_dir: Path) -> None:
@@ -168,14 +191,15 @@ def downloaded_source_folder(corpus: str, config_path: Path, download_root: Path
 
 
 def run(args: argparse.Namespace) -> int:
-    processing_selected = any((args.clean, args.load, args.split is not None, args.rare_check))
+    split_requested = args.split is not None or args.split_ratios is not None
+    processing_selected = any((args.clean, args.load, split_requested, args.rare_check))
     if not args.download and not processing_selected:
         raise ValueError("Choose --download, --clean, --load, --split, or --rare-check.")
     if (args.remove_word or args.remove_regex) and not args.clean:
         raise ValueError("--remove-word and --remove-regex require --clean.")
-    if args.download and not args.load and (args.split is not None or args.rare_check):
+    if args.download and not args.load and (split_requested or args.rare_check):
         raise ValueError("--download with --split or --rare-check requires --load in the same run.")
-    if args.download and args.rare_check and args.split is None:
+    if args.download and args.rare_check and not split_requested:
         raise ValueError("--download --rare-check requires --split so train/test files are created.")
 
     corpus = args.corpus.strip()
@@ -184,6 +208,7 @@ def run(args: argparse.Namespace) -> int:
 
     input_arg = args.input_folder.expanduser() if args.input_folder else None
     download_root = None
+    input_path: Path | None = None
     if args.download:
         if input_arg is None:
             raise ValueError("--download requires --in to point to a data.yaml manifest.")
@@ -193,7 +218,7 @@ def run(args: argparse.Namespace) -> int:
                 input_arg = config_beside_script
         input_path = input_arg.resolve()
         if not input_path.is_file():
-            raise FileNotFoundError(f"--download expects a YAML file for --in, not: {input_path}")
+            raise FileNotFoundError(f"--download expects a YAML file for --in, not: {display_path(input_path)}")
         download_root = (
             args.download_out.expanduser().resolve()
             if args.download_out
@@ -211,7 +236,7 @@ def run(args: argparse.Namespace) -> int:
                 str(download_root),
             ]
         )
-        print(f"\nDownloaded corpus '{corpus}' under: {download_root / 'corpora'}")
+        print(f"\nDownloaded corpus '{corpus}' under: {display_path(download_root / 'corpora')}")
         if not processing_selected:
             return 0
         input_path = downloaded_source_folder(corpus, input_path, download_root)
@@ -233,6 +258,11 @@ def run(args: argparse.Namespace) -> int:
         raise ValueError("--clean and --load require --in to be an input folder.")
     if args.split is not None and not 0 < args.split < 1:
         raise ValueError("--split must be greater than 0 and less than 1.")
+    ratios = args.split_ratios
+    if args.split is not None:
+        ratios = [1.0 - args.split, args.split]
+    if ratios is not None and len(ratios) not in (2, 3):
+        raise ValueError("--split-ratios requires two or three values.")
 
     parser_type = corpus.casefold() if corpus.casefold() in KNOWN_PARSERS else "general"
     output_root.mkdir(parents=True, exist_ok=True)
@@ -260,6 +290,11 @@ def run(args: argparse.Namespace) -> int:
     loaded_this_run = False
     if args.load:
         source_folder = cleaned_folder if args.clean else input_path
+        # shelve can use one file or several backend-specific files; remove all
+        # prior artifacts so a fresh load cannot retain records from old input.
+        for artifact in database_files(database_path):
+            artifact.unlink()
+        Path(str(database_path) + ".sha").unlink(missing_ok=True)
         command = [
             sys.executable,
             str(SRC_DIR / "data_process.py"),
@@ -270,19 +305,26 @@ def run(args: argparse.Namespace) -> int:
         ]
         if args.ext is not None:
             command.extend(("--ext", args.ext))
+        if args.verbose:
+            command.append("--verbose")
         command.append(str(source_folder))
         run_stage(command)
+        write_database_sha(database_path)
         loaded_this_run = True
 
-    if args.split is not None:
+    if split_requested:
         db_path = database_path if loaded_this_run else database_from_input(input_path, corpus)
+        if not loaded_this_run:
+            verify_database_sha(db_path)
+        if len(ratios) == 2:
+            (corpus_output / "valid.txt").unlink(missing_ok=True)
         command = [
             sys.executable,
             str(SRC_DIR / "load_processed.py"),
             "--db-path",
             str(db_path),
-            "--split",
-            str(args.split),
+            "--split-ratios",
+            *(str(value) for value in ratios),
             "--seed",
             str(args.seed),
             "--train-output",
@@ -290,19 +332,30 @@ def run(args: argparse.Namespace) -> int:
             "--test-output",
             str(test_path),
         ]
+        if len(ratios) == 3:
+            command.extend(("--valid-output", str(corpus_output / "valid.txt")))
+        if args.verbose:
+            command.append("--verbose")
         run_stage(command)
 
     if args.rare_check:
-        if args.split is not None:
-            rare_train, rare_test = train_path, test_path
+        if split_requested:
+            rare_train = train_path
+            rare_tests = [test_path]
+            valid_path = corpus_output / "valid.txt"
+            if len(ratios) == 3 and valid_path.is_file():
+                rare_tests.insert(0, valid_path)
         else:
             sentence_folder = sentence_folder_from_input(input_path, corpus)
             rare_train = sentence_folder / "train.txt"
-            rare_test = sentence_folder / "test.txt"
+            rare_tests = [sentence_folder / "test.txt"]
             if not rare_train.is_file() and (sentence_folder / "train_sentences.txt").is_file():
                 rare_train = sentence_folder / "train_sentences.txt"
-            if not rare_test.is_file() and (sentence_folder / "test_sentences.txt").is_file():
-                rare_test = sentence_folder / "test_sentences.txt"
+            if not rare_tests[0].is_file() and (sentence_folder / "test_sentences.txt").is_file():
+                rare_tests = [sentence_folder / "test_sentences.txt"]
+            valid_candidate = sentence_folder / "valid.txt"
+            if valid_candidate.is_file():
+                rare_tests.insert(0, valid_candidate)
 
         run_stage(
             [
@@ -311,13 +364,13 @@ def run(args: argparse.Namespace) -> int:
                 "--train",
                 str(rare_train),
                 "--test",
-                str(rare_test),
+                *(str(path) for path in rare_tests),
                 "--csv",
                 str(corpus_output / "rare-ngrams.csv"),
             ]
         )
 
-    print(f"\nPipeline outputs: {corpus_output}")
+    print(f"\nPipeline outputs: {display_path(corpus_output)}")
     return 0
 
 
@@ -326,7 +379,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         return run(args)
-    except (FileNotFoundError, OSError, ValueError, subprocess.CalledProcessError) as exc:
+    except (FileNotFoundError, OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as exc:
         parser.exit(1, f"error: {exc}\n")
 
 

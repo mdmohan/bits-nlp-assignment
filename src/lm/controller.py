@@ -8,6 +8,8 @@ batches, so their perplexities are directly comparable.
 """
 
 import json
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -15,7 +17,7 @@ import pandas as pd
 import torch
 import yaml
 
-from .data import Corpus, Vocab, load_corpus, make_loader
+from .data import Corpus, Vocab, load_corpus_files, make_loader
 from .neural import build_model, count_parameters
 from .neural.trainer import Trainer, TrainConfig, get_device, set_seed
 
@@ -83,7 +85,8 @@ class LanguageModelController:
 
 def run_from_config(config_path: str) -> pd.DataFrame:
     """Run every model in a YAML config for every seed; save per-run and summary tables."""
-    config = yaml.safe_load(Path(config_path).read_text())
+    config_path = Path(config_path).expanduser().resolve()
+    config = yaml.safe_load(config_path.read_text())
     output_dir = Path(config.get("output_dir", "results")) / config["name"]
 
     data_config = config["data"]
@@ -91,8 +94,41 @@ def run_from_config(config_path: str) -> pd.DataFrame:
     training = dict(config.get("training", {}))
     batch_size = training.pop("batch_size", 32)
 
-    corpus = load_corpus(data_config["loader"], data_config.get("lowercase", True),
-                         **data_config.get("params", {}))
+    if "corpus" not in data_config:
+        raise ValueError(
+            "data.corpus is required; prepare data through data_orchestrator.py "
+            "and load the generated train/valid/test files."
+        )
+    ratios = data_config.get("split_ratio", data_config.get("split_ratios"))
+    if isinstance(ratios, dict):
+        ratios = ratios.get("ratios")
+    if ratios is None:
+        ratios = data_config.get("params", {}).get("ratios", [0.8, 0.2])
+    if len(ratios) != 3:
+        raise ValueError("Neural model training requires train/valid/test; configure three split ratios.")
+
+    project_root = Path(__file__).resolve().parents[2]
+    pipeline = project_root / "src" / "data-pipeline" / "data_orchestrator.py"
+    try:
+        subprocess.run(
+            [sys.executable, str(pipeline), "--config", str(config_path)],
+            cwd=project_root,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f"Data preparation failed (exit code {exc.returncode}).") from exc
+
+    processed_root = Path(data_config.get("output", "data/processed")).expanduser()
+    if not processed_root.is_absolute():
+        processed_root = project_root / processed_root
+    corpus_dir = processed_root / data_config["corpus"]
+    corpus = load_corpus_files(
+        corpus_dir / "train.txt",
+        corpus_dir / "valid.txt",
+        corpus_dir / "test.txt",
+    )
+    if data_config.get("lowercase", True):
+        corpus = corpus.lowercase()
     controller = LanguageModelController(
         corpus,
         min_freq=vocab_config.get("min_freq", 2),

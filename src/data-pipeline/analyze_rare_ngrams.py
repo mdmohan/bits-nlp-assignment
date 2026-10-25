@@ -29,6 +29,7 @@ from typing import Iterator
 
 from nltk.tokenize import TreebankWordTokenizer
 from nltk.util import ngrams
+from log_utils import display_path
 
 
 TOKENIZER = TreebankWordTokenizer()
@@ -139,19 +140,20 @@ def padded_ngrams(tokens: list[str], order: int):
     return ngrams(padded, order)
 
 
-def sample_test_sentences(test_path: Path, limit: int, seed: int) -> list[str]:
+def sample_test_sentences(test_paths: list[Path], limit: int, seed: int) -> list[str]:
     """Reservoir-sample sentences uniformly without loading the test file."""
     rng = random.Random(seed)
     sample: list[str] = []
     seen = 0
-    for sentence in iter_sentences(test_path, "Pass 2/4 test sample"):
-        seen += 1
-        if len(sample) < limit:
-            sample.append(sentence)
-        else:
-            replacement_index = rng.randrange(seen)
-            if replacement_index < limit:
-                sample[replacement_index] = sentence
+    for test_path in test_paths:
+        for sentence in iter_sentences(test_path, "Pass 2/4 test sample"):
+            seen += 1
+            if len(sample) < limit:
+                sample.append(sentence)
+            else:
+                replacement_index = rng.randrange(seen)
+                if replacement_index < limit:
+                    sample[replacement_index] = sentence
     return sample
 
 
@@ -208,7 +210,7 @@ def count_rare_candidates_in_train(
 
 
 def count_rare_candidates_in_test(
-    test_path: Path,
+    test_paths: list[Path],
     vocabulary: set[str],
     rare_train_counts: dict[int, dict[tuple[str, ...], int]],
 ) -> tuple[dict[int, Counter], int, int, int]:
@@ -218,16 +220,17 @@ def count_rare_candidates_in_test(
     total_words = 0
     sentence_count = 0
 
-    for sentence in iter_sentences(test_path, "Pass 4/4 test n-gram counts"):
-        sentence_count += 1
-        tokens, sentence_oov = map_oov(tokenize(sentence), vocabulary)
-        oov_count += sentence_oov
-        total_words += len(tokens)
-        for order in ORDERS:
-            rare_sequences = rare_train_counts[order]
-            for sequence in padded_ngrams(tokens, order):
-                if sequence in rare_sequences:
-                    test_counts[order][sequence] += 1
+    for test_path in test_paths:
+        for sentence in iter_sentences(test_path, "Pass 4/4 test n-gram counts"):
+            sentence_count += 1
+            tokens, sentence_oov = map_oov(tokenize(sentence), vocabulary)
+            oov_count += sentence_oov
+            total_words += len(tokens)
+            for order in ORDERS:
+                rare_sequences = rare_train_counts[order]
+                for sequence in padded_ngrams(tokens, order):
+                    if sequence in rare_sequences:
+                        test_counts[order][sequence] += 1
     return test_counts, oov_count, total_words, sentence_count
 
 
@@ -274,7 +277,7 @@ def main() -> int:
         )
     )
     parser.add_argument("--train", type=Path, required=True, help="Training sentences, one per line.")
-    parser.add_argument("--test", type=Path, required=True, help="Held-out test sentences, one per line.")
+    parser.add_argument("--test", type=Path, nargs="+", required=True, help="One or more held-out sentence files (combined as one evaluation chunk).")
     parser.add_argument(
         "--min-word-count",
         type=int,
@@ -311,8 +314,8 @@ def main() -> int:
         parser.error("--top and --candidate-sentences must be at least 1")
 
     train_path = args.train.expanduser().resolve()
-    test_path = args.test.expanduser().resolve()
-    if train_path == test_path:
+    test_paths = [path.expanduser().resolve() for path in args.test]
+    if train_path in test_paths:
         parser.error("--train and --test must refer to different files")
 
     try:
@@ -322,7 +325,7 @@ def main() -> int:
 
         print("Pass 2/4: sampling test sentences for candidate n-grams…", flush=True)
         sampled = sample_test_sentences(
-            test_path, limit=args.candidate_sentences, seed=args.seed
+            test_paths, limit=args.candidate_sentences, seed=args.seed
         )
         candidates = find_candidate_ngrams(sampled, vocabulary)
         print(
@@ -340,7 +343,7 @@ def main() -> int:
 
         print("Pass 4/4: counting rare candidates in all test text…", flush=True)
         test_counts, oov_count, total_words, test_sentence_count = count_rare_candidates_in_test(
-            test_path, vocabulary, rare_train_counts
+            test_paths, vocabulary, rare_train_counts
         )
     except (OSError, UnicodeError, ValueError) as exc:
         parser.error(str(exc))
@@ -393,7 +396,7 @@ def main() -> int:
             )
             writer.writeheader()
             writer.writerows(csv_rows)
-        print(f"\nWrote examples to: {output_path}")
+        print(f"\nWrote examples to: {display_path(output_path)}")
 
     return 0
 

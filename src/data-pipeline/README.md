@@ -4,7 +4,8 @@
 
 ```text
 python src/data-pipeline/data_pipeline.py --corpus NAME [--in PATH] [--out FOLDER]
-                            [--download] [--clean] [--load] [--split TEST_RATIO]
+                            [--download] [--clean] [--load]
+                            [--split-ratios TRAIN TEST [VALID TEST]]
                             [--rare-check]
 ```
 
@@ -22,7 +23,9 @@ Processing defaults to `data/processed`; download mode defaults to `data/raw`. P
 ├── cleaned/              # One cleaned .txt file per retained source document
 ├── cleaning_audit/       # Cleaning and read-error reports
 ├── <corpus>.db           # Parsed document records (shelve database)
+├── <corpus>.db.sha       # SHA-256 checksum for the database backing file(s)
 ├── train.txt
+├── valid.txt             # Present for a three-way split
 ├── test.txt
 └── rare-ngrams.csv
 ```
@@ -42,7 +45,7 @@ When combined with processing stages, the pipeline downloads first and passes th
 
 ```bash
 python src/data-pipeline/data_pipeline.py \
-  --corpus brown --in data.yaml --download --load --split 0.2 --seed 55
+  --corpus brown --in data.yaml --download --load --split-ratios 0.8 0.2 --seed 55
 ```
 
 ## Download a corpus
@@ -76,7 +79,7 @@ python src/data-pipeline/data_pipeline.py \
   --corpus webtext \
   --in data/raw/corpora/webtext \
   --out data/processed \
-  --clean --load --split 0.2 --rare-check \
+  --clean --load --split-ratios 0.8 0.2 --rare-check \
   --seed 42 \
   --remove-word urlLink \
   --remove-regex 'https?://\S+'
@@ -121,19 +124,19 @@ The database is written to `<out>/<corpus>/<corpus>.db`. The `--corpus` value se
 
 ### Split an existing database
 
-The split is by source document, so sentences from one document stay together. `--split` is the test fraction; `--seed` makes the assignment reproducible.
+The split is by source document, so sentences from one document stay together. Ratios are in `train test` order for two values, or `train valid test` order for three. They must be positive and sum to 1. The seed makes document assignment reproducible.
 
 ```bash
 python src/data-pipeline/data_pipeline.py \
   --corpus webtext \
   --in data/processed/webtext/webtext.db \
   --out data/processed \
-  --split 0.2 --seed 42
+  --split-ratios 0.8 0.2 --seed 42
 ```
 
-For a split-only run, `--in` can be the database path or a folder containing `<corpus>.db`. If `--in` is omitted, the pipeline looks for `data/processed/<corpus>/<corpus>.db`. The resulting sentence files are `<out>/<corpus>/train.txt` and `test.txt`.
+For a split-only run, `--in` can be the database path or a folder containing `<corpus>.db`. If `--in` is omitted, the pipeline looks for `data/processed/<corpus>/<corpus>.db`. The resulting sentence files are `<out>/<corpus>/train.txt` and `test.txt`. For three ratios, use for example `--split-ratios 0.8 0.1 0.1`; this also writes `valid.txt`, the validation filename expected by the model data loader.
 
-If `--load` and `--split` are both selected, the split uses the database created during that run.
+If `--load` and a split are both selected, the split uses the database created during that run. A fresh load removes prior shelve backing files and creates a matching `.db.sha` checksum. A split-only run verifies the checksum before reading the cached DB.
 
 ### Check rare n-grams
 
@@ -145,9 +148,35 @@ python src/data-pipeline/data_pipeline.py \
   --rare-check
 ```
 
-Without `--split`, the pipeline reads `train.txt` and `test.txt` from `--in` (or from `data/processed/<corpus>/` if `--in` is omitted). It also recognizes `train_sentences.txt` and `test_sentences.txt`. With `--split --rare-check`, it analyzes the files created by that split.
+Without a split, the pipeline reads `train.txt` and `test.txt` from `--in` (or from `data/processed/<corpus>/` if `--in` is omitted). It also recognizes `train_sentences.txt` and `test_sentences.txt`. For a three-way split, rare n-gram analysis uses train for vocabulary/counts and combines valid plus test as one held-out chunk.
 
 The report is written to `<out>/<corpus>/rare-ngrams.csv`. Candidate discovery samples up to 20,000 test sentences; counts for discovered candidates are then counted over the full train and test files. This CSV is an example list, not a complete inventory or corpus-wide unseen-ngram percentage.
+
+## Config-driven preparation
+
+Run `data_orchestrator.py` with a model YAML containing a `data:` section. `data.yaml` in this folder remains the source of truth for each corpus download/source location.
+
+The orchestrator reads the proposed keys below. For existing model configs, it also accepts `data.loader` as the corpus name and `data.params.ratios` / `data.params.split_seed` as fallbacks.
+
+```yaml
+data:
+  corpus: brown
+  split_seed: 42
+  split_ratio: [0.8, 0.1, 0.1] # train, valid, test; two values make train/test
+  use_cached: true
+  input: data/raw               # root folder; source subfolder comes from data.yaml
+  output: data/processed
+  rare-check: true
+  clean: true
+```
+
+```bash
+python src/data-pipeline/data_orchestrator.py --config src/configs/brown.yaml
+```
+
+The orchestrator uses a cached DB only when its `.db.sha` file is present and matches. Otherwise, it resolves the raw corpus from the manifest; it extracts an existing NLTK ZIP as needed. If no source files are available locally, it downloads through the manifest, then runs clean (when requested), load, split, and rare-check. A cached database and its checksum can be shared without the raw corpus.
+
+Logs show short stage names and project-relative output paths by default. Per-document load details and split sample sentences are hidden; add `--verbose` to the orchestrator or pipeline command to show them.
 
 ## Input format and corpus notes
 

@@ -1,17 +1,13 @@
-"""Turn any text dataset into tokenised sentences, a vocabulary and PyTorch batches.
-
-Every loader returns a `Corpus`: three lists of sentences, where a sentence is a list of
-word tokens. Everything downstream (vocabulary, models, training) only sees a `Corpus`,
-so adding a new dataset means writing one loader function and registering it in LOADERS.
-"""
+"""Load pipeline split files and prepare them for the neural language models."""
 
 import random
 from collections import Counter
 from dataclasses import dataclass
+from pathlib import Path
 
 import torch
 from torch.nn.utils.rnn import pad_sequence
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, Sampler
 
 PAD, UNK, BOS, EOS = "<pad>", "<unk>", "<s>", "</s>"
 
@@ -38,77 +34,14 @@ class Corpus:
         return stats
 
 
-def split_documents(documents: list[list[Sentence]], ratios=(0.8, 0.1, 0.1), seed=42) -> Corpus:
-    """Shuffle whole documents with a fixed seed, so no document appears in two splits."""
-    documents = list(documents)
-    random.Random(seed).shuffle(documents)
+def load_corpus_files(train: str | Path, valid: str | Path, test: str | Path) -> Corpus:
+    """Read the pipeline's pre-split files (one whitespace-tokenized sentence per line)."""
 
-    n_train = int(ratios[0] * len(documents))
-    n_valid = int(ratios[1] * len(documents))
-
-    def flatten(docs):
-        return [sentence for doc in docs for sentence in doc if sentence]
-
-    return Corpus(
-        train=flatten(documents[:n_train]),
-        valid=flatten(documents[n_train:n_train + n_valid]),
-        test=flatten(documents[n_train + n_valid:]),
-    )
-
-
-# ---------------------------------------------------------------- dataset loaders
-
-
-def load_brown(categories=None, ratios=(0.8, 0.1, 0.1), split_seed=42) -> Corpus:
-    """NLTK Brown corpus; each Brown file is one document. `categories=None` uses all genres."""
-    import nltk
-    from nltk.corpus import brown
-
-    nltk.download("brown", quiet=True)
-    documents = [
-        [list(sentence) for sentence in brown.sents(fileid)]
-        for fileid in brown.fileids(categories=categories)
-    ]
-    return split_documents(documents, ratios, split_seed)
-
-
-def load_text_files(train: str, valid: str, test: str) -> Corpus:
-    """Plain text files, one sentence per line, already split. Tokens are whitespace-separated."""
-
-    def read(path):
-        with open(path, encoding="utf-8") as handle:
+    def read(path: str | Path) -> list[Sentence]:
+        with Path(path).open(encoding="utf-8") as handle:
             return [line.split() for line in handle if line.strip()]
 
     return Corpus(read(train), read(valid), read(test))
-
-
-def load_huggingface(name: str, config=None, text_field="text",
-                     splits=("train", "validation", "test")) -> Corpus:
-    """Any Hugging Face dataset with a text column, e.g. name='Salesforce/wikitext',
-    config='wikitext-2-raw-v1'. Each non-empty line becomes one whitespace-tokenised sentence."""
-    from datasets import load_dataset
-
-    dataset = load_dataset(name, config)
-
-    def read(split):
-        return [row[text_field].split() for row in dataset[split] if row[text_field].strip()]
-
-    train, valid, test = (read(split) for split in splits)
-    return Corpus(train, valid, test)
-
-
-LOADERS = {
-    "brown": load_brown,
-    "text_files": load_text_files,
-    "huggingface": load_huggingface,
-}
-
-
-def load_corpus(loader: str, lowercase: bool = True, **params) -> Corpus:
-    corpus = LOADERS[loader](**params)
-    if lowercase:
-        corpus = corpus.lowercase()
-    return corpus
 
 
 # ---------------------------------------------------------------- vocabulary
@@ -170,7 +103,53 @@ class SentenceDataset(Dataset):
         return ids[:-1], ids[1:]
 
 
+class LengthBucketBatchSampler(Sampler[list[int]]):
+    """Group similar lengths and cap padded sequence positions per batch."""
+
+    def __init__(self, dataset: SentenceDataset, batch_size: int, shuffle: bool,
+                 max_padded_tokens: int | None = None):
+        if batch_size < 1:
+            raise ValueError("batch_size must be at least 1")
+        self.lengths = [len(item) for item in dataset.items]
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.max_padded_tokens = max_padded_tokens or batch_size * 64
+
+    def _batches(self) -> list[list[int]]:
+        indices = sorted(range(len(self.lengths)), key=self.lengths.__getitem__)
+        batches = []
+        batch = []
+        batch_max_length = 0
+        for index in indices:
+            proposed_max_length = max(batch_max_length, self.lengths[index])
+            proposed_size = len(batch) + 1
+            exceeds_token_budget = proposed_size * proposed_max_length > self.max_padded_tokens
+            if batch and (proposed_size > self.batch_size or exceeds_token_budget):
+                batches.append(batch)
+                batch = []
+                batch_max_length = 0
+            batch.append(index)
+            batch_max_length = max(batch_max_length, self.lengths[index])
+        if batch:
+            batches.append(batch)
+        return batches
+
+    def __iter__(self):
+        batches = self._batches()
+
+        if self.shuffle:
+            random.shuffle(batches)
+            for batch in batches:
+                random.shuffle(batch)
+        yield from batches
+
+    def __len__(self):
+        return len(self._batches())
+
+
 def make_loader(sentences: list[Sentence], vocab: Vocab, batch_size: int, shuffle: bool) -> DataLoader:
+    dataset = SentenceDataset(sentences, vocab)
+
     def collate(batch):
         inputs, targets = zip(*batch)
         return (
@@ -178,5 +157,8 @@ def make_loader(sentences: list[Sentence], vocab: Vocab, batch_size: int, shuffl
             pad_sequence(targets, batch_first=True, padding_value=vocab.pad_id),
         )
 
-    return DataLoader(SentenceDataset(sentences, vocab), batch_size=batch_size,
-                      shuffle=shuffle, collate_fn=collate)
+    return DataLoader(
+        dataset,
+        batch_sampler=LengthBucketBatchSampler(dataset, batch_size, shuffle),
+        collate_fn=collate,
+    )

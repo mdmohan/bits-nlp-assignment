@@ -2,6 +2,7 @@ import argparse
 import shelve
 from pathlib import Path
 from corpus_parser import create_parser
+from log_utils import display_path
 
 
 def collect_files(corpus_path: Path, extension: str) -> list[Path]:
@@ -54,6 +55,11 @@ def main():
         default="",
         help="File extension to match when corpus_path is a directory. Default: 'none'."
     )
+    parser_cli.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print one progress line per source document.",
+    )
 
     args = parser_cli.parse_args()
     
@@ -77,7 +83,7 @@ def main():
 
         for idx, file_path in enumerate(target_files, start=1):
             if 'README' in str(file_path) or 'CONTENT' in str(file_path):
-                print("Skip", file_path)
+                print("Skip", file_path.name)
                 continue
             key = str(file_path.resolve())
             
@@ -101,14 +107,16 @@ def main():
                 total_paragraphs += len(result)
                 total_sentences += file_sentence_count
 
-                print(f"[{idx}/{len(target_files)}] Processed: {file_path.name} ({file_sentence_count} sentences)")
+                if args.verbose:
+                    print(f"[{idx}/{len(target_files)}] {file_path.name}: {file_sentence_count:,} sentences")
 
             except Exception as e:
                 print(f"[{idx}/{len(target_files)}] Error processing {file_path.name}: {e}")
 
     print("\n--- Pipeline Complete ---")
-    print(f"Database saved to : {args.db_path}")
-    print(f"Sentences dumped to: {args.dump_path}")
+    print(f"Database saved to : {display_path(args.db_path)}")
+    if args.dump_path:
+        print(f"Sentences dumped to: {display_path(args.dump_path)}")
     print(f"Total Paragraphs  : {total_paragraphs}")
     print(f"Total Sentences   : {total_sentences}")
 

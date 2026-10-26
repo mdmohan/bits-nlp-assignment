@@ -88,10 +88,13 @@ def run_from_config(
     train_percent: float = 100,
     algorithm: str | None = None,
     seed_override: int | None = None,
+    context_size_override: int | None = None,
 ) -> pd.DataFrame:
-    """Run configured models/seeds, with optional single-model and seed overrides."""
+    """Run configured models/seeds, with optional algorithm, seed and FFNN context overrides."""
     if not 0 < train_percent <= 100:
         raise ValueError("train_percent must be greater than 0 and at most 100")
+    if context_size_override is not None and context_size_override < 1:
+        raise ValueError("FFNN context size must be at least 1")
 
     config_path = Path(config_path).expanduser().resolve()
     config = yaml.safe_load(config_path.read_text())
@@ -109,6 +112,21 @@ def run_from_config(
             available = ", ".join(str(model.get("name", "<unnamed>")) for model in configured_models)
             raise ValueError(f"Unknown algorithm '{algorithm}'. Configured algorithms: {available}")
         selected_models = matches
+    # Copy model specs before applying CLI overrides so the loaded configuration
+    # remains an independent source object.
+    selected_models = [
+        {**model, "params": dict(model.get("params", {}))}
+        for model in selected_models
+    ]
+    if context_size_override is not None:
+        ffnn_models = [
+            model for model in selected_models
+            if str(model.get("name", "")).casefold() == "ffnn"
+        ]
+        if not ffnn_models:
+            raise ValueError("--context-size applies to FFNN; select/configure an FFNN model.")
+        for model in ffnn_models:
+            model["params"]["context_size"] = context_size_override
     configured_seeds = config.get("seeds", [42])
     selected_seeds = [seed_override] if seed_override is not None else configured_seeds
     if not selected_seeds:
@@ -117,7 +135,11 @@ def run_from_config(
     # precisely which models and seeds produced this run.
     config["models"] = selected_models
     config["seeds"] = selected_seeds
-    output_dir = Path(config.get("output_dir", "results")) / config["name"]
+    output_name = config["name"]
+    if context_size_override is not None:
+        output_name = f"{output_name}_ffnn_ctx{context_size_override}"
+        config["context_size_override"] = context_size_override
+    output_dir = Path(config.get("output_dir", "results")) / output_name
 
     data_config = config["data"]
     vocab_config = config.get("vocab", {})
@@ -172,22 +194,36 @@ def run_from_config(
     config["train_percent"] = train_percent
     train_config = TrainConfig(**training)
 
+    model_labels = []
+    for model in selected_models:
+        label = str(model.get("name"))
+        if label.casefold() == "ffnn":
+            context_size = model.get("params", {}).get("context_size", 3)
+            label += f" (context_size={context_size})"
+        model_labels.append(label)
     print(
         "Run selection: "
-        + ", ".join(str(model.get("name")) for model in selected_models)
+        + ", ".join(model_labels)
         + f" | seeds {', '.join(str(seed) for seed in selected_seeds)}",
         flush=True,
     )
-    results = [
-        controller.run(model["name"], model.get("params", {}), train_config, seed)
-        for model in selected_models
-        for seed in selected_seeds
-    ]
+    results = []
+    for model in selected_models:
+        for seed in selected_seeds:
+            result = controller.run(model["name"], model.get("params", {}), train_config, seed)
+            if str(model.get("name", "")).casefold() == "ffnn":
+                result["context_size"] = model.get("params", {}).get("context_size", 3)
+            results.append(result)
     for result in results:
         result["train_percent"] = train_percent
 
     runs = pd.DataFrame(results)
-    summary = runs.groupby("model")[["valid_ppl", "test_ppl", "train_seconds", "test_seconds"]].agg(["mean", "std"])
+    group_columns = ["model"]
+    if "context_size" in runs.columns:
+        group_columns.append("context_size")
+    summary = runs.groupby(group_columns, dropna=False)[
+        ["valid_ppl", "test_ppl", "train_seconds", "test_seconds"]
+    ].agg(["mean", "std"])
 
     runs.to_csv(output_dir / "runs.csv", index=False)
     summary.to_csv(output_dir / "summary.csv")

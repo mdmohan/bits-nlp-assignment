@@ -39,10 +39,22 @@ if __name__ == "__main__":
         type=int,
         help="override configured seeds and run once with this seed",
     )
+    parser.add_argument(
+        "--context-size",
+        "--ffnn-context-size",
+        dest="context_size",
+        type=int,
+        metavar="WORDS",
+        help=(
+            "override FFNN context size (number of preceding words); "
+            "1 is bigram-style, 2 is trigram-style"
+        ),
+    )
     args = parser.parse_args()
     run_from_config(
         args.config,
         train_percent=args.train_percent,
         algorithm=args.algorithm,
         seed_override=args.seed,
+        context_size_override=args.context_size,
     )

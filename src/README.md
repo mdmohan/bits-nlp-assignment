@@ -68,6 +68,20 @@ python -u run.py configs/brown.yaml --model lstm
 With no overrides, the configured model and seed lists are used. The saved `config.yaml` records
 the effective model and seed selection for that output.
 
+The FFNN's `context_size` is the number of preceding words it receives to predict the next
+word. Override it for a controlled context comparison while keeping the same corpus, seed,
+and training percentage:
+
+```sh
+python -u run.py configs/brown.yaml --algorithm ffnn --context-size 1 --seed 13
+python -u run.py configs/brown.yaml --algorithm ffnn --context-size 2 --seed 13
+python -u run.py configs/brown.yaml --algorithm ffnn --context-size 4 --seed 13
+```
+
+Context size `1` gives a bigram-style neural context; `2` gives a trigram-style context.
+Each override writes to its own `results/<name>_ffnn_ctx<N>/` folder, and the context size is
+recorded in `runs.csv`, `summary.csv`, and the saved config. The option applies to FFNN only.
+
 For a quicker run, pass `--train-percent` to use only the first portion of the training split;
 validation and test data remain complete:
 
@@ -80,33 +94,45 @@ the output config, data statistics, and run table.
 
 ### Inspecting a saved run
 
-From the repository root, load a result folder and select one of its saved checkpoints:
+Start the interactive CLI without loading anything first:
 
 ```sh
-python src/lm/cli.py load src/results/brown_press_neural --checkpoint ffnn_seed13.pt
+python src/lm/cli.py
 ```
 
-Replace `src/results/brown_press_neural` with the result folder created by your training run.
+Inside the CLI, create and evaluate unsmoothed or smoothed n-gram models:
 
-Inside the prompt, use `vocab [N]` for the most frequent vocabulary entries, `stats` for
-split/OOV information, or enter text (or `predict TEXT`) to see the loaded neural model's
-next-word guesses. `evaluate FILE bi|tri` evaluates both an unsmoothed count n-gram model and
-the loaded neural model on that context window. It reads counts from the configured training
-split; pass `--train PATH` to `load` if that split has moved. `rare-check bi|tri CSV [RANGE]` scores
-the selected model on matching CSV rows, weighted by `test_count`; the range is zero-based and
-end-exclusive, defaults to `0-10`, and accepts `0-all` to use every matching row. An unsmoothed n-gram has
-infinite perplexity if any evaluated event has zero probability; the CLI also reports its
-finite-event perplexity and coverage.
 ```text
+lm> ngram mygutenberg --n 2 --train data/processed/gutenberg/train.txt
+lm> ngram mygutenberg --evaluate data/processed/gutenberg/test.txt
+lm> ngram mygutenberg_laplace --n 2 --train data/processed/gutenberg/train.txt --smoothing laplace --k 1.0
+lm> ngram mygutenberg_backoff --n 3 --train data/processed/gutenberg/train.txt --smoothing backoff --discount 0.75
+```
+
+Laplace requires an explicit `--k` value. Backoff accepts `--discount` (default `0.75`) and
+backs off recursively: trigram to bigram to unigram. The trigram build collects those lower-order
+counts from the same training file, so no separate bigram model build is needed.
+
+The evaluation table shows each context, expected next word, n-gram prediction, and the
+probability assigned to the expected word. The default table shows the first 100 events;
+`--limit 0` prints every event. Perplexity and top-1 accuracy summarize the full file.
+
+To compare against a neural checkpoint, load it and compare both models on the same test file:
+
+```text
+lm> nn load src/results/brown_press_neural/ffnn_seed13.pt
 lm> vocab 10
-lm> stats
-lm> The cat sat
-lm> evaluate data/processed/brown/test.txt tri
-lm> rare-check bi data/processed/brown/rare-ngrams.csv
-lm> rare-check tri data/processed/brown/rare-ngrams.csv 10-100
-lm> rare-check tri data/processed/brown/rare-ngrams.csv 0-all
+lm> predict the cat
+lm> ngram brown_bigram --n 2 --train data/processed/brown/train.txt
+lm> compare --one ngram brown_bigram --two neural ffnn_seed13.pt --test data/processed/brown/test.txt
 lm> quit
 ```
+
+When the n-gram is created from the neural model's exact training file, the CLI uses the
+checkpoint's saved vocabulary, lowercasing rule, and training percentage. Otherwise it builds
+a vocabulary from the supplied training text (`--min-freq 2` by default). N-gram models are
+kept in memory for the current CLI session; recreate them after restarting the CLI. A zero
+probability event gives an unsmoothed model infinite perplexity.
 
 ### Using it from Python / a notebook
 

@@ -77,6 +77,16 @@ class Vocab:
 
     def __init__(self, sentences: list[Sentence], min_freq: int = 2, max_size: int | None = None):
         counts = Counter(word for sentence in sentences for word in sentence)
+        self._initialize(counts, min_freq, max_size)
+
+    @classmethod
+    def from_counts(cls, counts: Counter, min_freq: int = 2, max_size: int | None = None):
+        """Build the same vocabulary from streaming token counts."""
+        vocab = cls.__new__(cls)
+        vocab._initialize(counts, min_freq, max_size)
+        return vocab
+
+    def _initialize(self, counts: Counter, min_freq: int, max_size: int | None):
         words = [word for word, count in counts.most_common(max_size) if count >= min_freq]
         self.itos = [PAD, UNK, BOS, EOS] + words
         self.stoi = {word: index for index, word in enumerate(self.itos)}

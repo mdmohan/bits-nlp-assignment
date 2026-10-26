@@ -50,6 +50,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--clean", action="store_true", help="Clean input text files.")
     parser.add_argument(
+        "--include-extensionless",
+        action="store_true",
+        help="Include extensionless source documents during cleaning.",
+    )
+    parser.add_argument(
         "--encoding",
         default="auto",
         help="Input encoding for cleaning; 'auto' tries UTF-8, then detects or falls back to CP1252.",
@@ -95,7 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="NAME_OR_PATH",
-        help="File name or path to skip during loading; repeat for additional files.",
+        help="File name or path to skip during cleaning/loading; repeat for additional files.",
     )
     return parser
 
@@ -158,7 +163,7 @@ def downloaded_source_folder(corpus: str, config_path: Path, download_root: Path
         package_dir = download_root / configured_extract_path(entry, package)
         archive_path = download_root / "corpora" / f"{package}.zip"
         if not package_dir.is_dir() and zipfile.is_zipfile(archive_path):
-            safe_extract_zip(archive_path, download_root)
+            safe_extract_zip(archive_path, package_dir.parent)
         if not package_dir.is_dir():
             raise FileNotFoundError(f"Downloaded NLTK package files were not found: {package_dir}")
         return package_dir
@@ -224,6 +229,9 @@ def run(args: argparse.Namespace) -> int:
             if not isinstance(manifest_ignored, list) or any(not isinstance(item, str) for item in manifest_ignored):
                 raise ValueError(f"Corpus '{corpus}' ignore-files must be a list of file names or relative paths")
             args.ignore_file = list(dict.fromkeys([*args.ignore_file, *manifest_ignored]))
+        args.include_extensionless = args.include_extensionless or bool(
+            manifest_entry.get("include-extensionless", False)
+        )
         download_root = (
             args.download_out.expanduser().resolve()
             if args.download_out
@@ -290,6 +298,10 @@ def run(args: argparse.Namespace) -> int:
             command.extend(("--remove-word", word))
         for pattern in args.remove_regex:
             command.extend(("--remove-regex", pattern))
+        for ignored in args.ignore_file:
+            command.extend(("--ignore-file", ignored))
+        if args.include_extensionless:
+            command.append("--include-extensionless")
         run_stage(command)
 
     loaded_this_run = False

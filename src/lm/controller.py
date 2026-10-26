@@ -45,9 +45,17 @@ class LanguageModelController:
         }
         print("data:", json.dumps(self.data_stats, indent=2))
 
-    def run(self, model_name: str, model_params: dict, train_config: TrainConfig, seed: int) -> dict:
+    def run(
+        self,
+        model_name: str,
+        model_params: dict,
+        train_config: TrainConfig,
+        seed: int,
+        artifact_name: str | None = None,
+    ) -> dict:
         """Train one model with one seed and evaluate it on the test set."""
-        print(f"\n=== {model_name} | seed {seed} | device {self.device} ===")
+        run_label = artifact_name or model_name
+        print(f"\n=== {run_label} | seed {seed} | device {self.device} ===")
         set_seed(seed)
         model = build_model(model_name, len(self.vocab), self.vocab.pad_id, **model_params)
         trainer = Trainer(model, train_config, self.vocab.pad_id, self.device)
@@ -77,7 +85,7 @@ class LanguageModelController:
         print(f"  test ppl {test['perplexity']:.2f}")
 
         if self.output_dir:
-            run_name = f"{model_name}_seed{seed}"
+            run_name = f"{run_label}_seed{seed}"
             pd.DataFrame(history).to_csv(self.output_dir / f"{run_name}_history.csv", index=False)
             torch.save(model.state_dict(), self.output_dir / f"{run_name}.pt")
         return result
@@ -112,21 +120,40 @@ def run_from_config(
             available = ", ".join(str(model.get("name", "<unnamed>")) for model in configured_models)
             raise ValueError(f"Unknown algorithm '{algorithm}'. Configured algorithms: {available}")
         selected_models = matches
-    # Copy model specs before applying CLI overrides so the loaded configuration
+    configured_context_sizes = config.get("context_sizes")
+    if configured_context_sizes is not None:
+        if (
+            not isinstance(configured_context_sizes, list)
+            or not configured_context_sizes
+            or any(type(value) is not int or value < 1 for value in configured_context_sizes)
+        ):
+            raise ValueError("context_sizes must be a non-empty list of positive integers.")
+        if len(set(configured_context_sizes)) != len(configured_context_sizes):
+            raise ValueError("context_sizes must not contain duplicates.")
+
+    # Copy model specs before expanding context variants so the loaded config
     # remains an independent source object.
-    selected_models = [
+    configured_models = [
         {**model, "params": dict(model.get("params", {}))}
         for model in selected_models
     ]
-    if context_size_override is not None:
-        ffnn_models = [
-            model for model in selected_models
-            if str(model.get("name", "")).casefold() == "ffnn"
-        ]
-        if not ffnn_models:
-            raise ValueError("--context-size applies to FFNN; select/configure an FFNN model.")
-        for model in ffnn_models:
-            model["params"]["context_size"] = context_size_override
+    selected_models = []
+    has_ffnn = any(str(model.get("name", "")).casefold() == "ffnn" for model in configured_models)
+    if context_size_override is not None and not has_ffnn:
+        raise ValueError("--context-size applies to FFNN; select/configure an FFNN model.")
+    context_sizes = (
+        [context_size_override]
+        if context_size_override is not None
+        else configured_context_sizes
+    )
+    for model in configured_models:
+        if str(model.get("name", "")).casefold() == "ffnn" and context_sizes:
+            for context_size in context_sizes:
+                variant = {**model, "params": dict(model["params"])}
+                variant["params"]["context_size"] = context_size
+                selected_models.append(variant)
+        else:
+            selected_models.append(model)
     configured_seeds = config.get("seeds", [42])
     selected_seeds = [seed_override] if seed_override is not None else configured_seeds
     if not selected_seeds:
@@ -139,6 +166,7 @@ def run_from_config(
     if context_size_override is not None:
         output_name = f"{output_name}_ffnn_ctx{context_size_override}"
         config["context_size_override"] = context_size_override
+        config["context_sizes"] = [context_size_override]
     output_dir = Path(config.get("output_dir", "results")) / output_name
 
     data_config = config["data"]
@@ -210,9 +238,15 @@ def run_from_config(
     results = []
     for model in selected_models:
         for seed in selected_seeds:
-            result = controller.run(model["name"], model.get("params", {}), train_config, seed)
-            if str(model.get("name", "")).casefold() == "ffnn":
-                result["context_size"] = model.get("params", {}).get("context_size", 3)
+            is_ffnn = str(model.get("name", "")).casefold() == "ffnn"
+            context_size = model.get("params", {}).get("context_size", 3) if is_ffnn else None
+            artifact_name = f"ffnn_ctx{context_size}" if is_ffnn and context_sizes else None
+            result = controller.run(
+                model["name"], model.get("params", {}), train_config, seed,
+                artifact_name=artifact_name,
+            )
+            if is_ffnn:
+                result["context_size"] = context_size
             results.append(result)
     for result in results:
         result["train_percent"] = train_percent

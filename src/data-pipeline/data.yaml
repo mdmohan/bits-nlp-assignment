@@ -88,6 +88,12 @@ corpora:
     download:
       type: nltk
       package: reuters
+    extract-path: corpora/reuters
+    include-extensionless: true
+    ignore-files:
+      - cats.txt
+      - README
+      - stopwords
 
   ptb:
     title: Penn Treebank (NLTK package)
@@ -136,5 +142,6 @@ corpora:
 #   split: {unit: document, test_ratio: 0.2, seed: 55}
 #   leakage_checks: Describe exact/near-duplicate checks across train and test.
 #   evaluation: Record which models/metrics were used to compare this corpus.
-# `extract-path` and `ignore-files` are operational: the orchestrator uses them
-# to locate extracted content and exclude named files during loading.
+# `extract-path`, `ignore-files`, and `include-extensionless` are operational:
+# they locate extracted content, exclude package metadata, and admit extensionless
+# documents into cleaning/loading when the corpus stores articles without suffixes.

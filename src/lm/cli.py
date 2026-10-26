@@ -171,10 +171,17 @@ class LanguageModelCLI:
         config, vocab = self._read_run(path.parent)
         stoi = {w: i for i, w in enumerate(vocab)}
         name = path.stem.rsplit("_seed", 1)[0]
-        model_config = next((m for m in config.get("models", []) if m["name"] == name), None)
+        context_match = re.fullmatch(r"ffnn_ctx(\d+)", name)
+        model_type = "ffnn" if context_match else name
+        model_config = next(
+            (m for m in config.get("models", []) if m["name"] == model_type), None
+        )
         if model_config is None:
             raise ValueError(f"No matching model configuration for {path.name}")
-        model = build_model(name, len(vocab), stoi[PAD], **model_config.get("params", {}))
+        model_params = dict(model_config.get("params", {}))
+        if context_match:
+            model_params["context_size"] = int(context_match.group(1))
+        model = build_model(model_type, len(vocab), stoi[PAD], **model_params)
         model.load_state_dict(torch.load(path, map_location=self.device, weights_only=True))
         model.to(self.device).eval()
         data = config.get("data", {})

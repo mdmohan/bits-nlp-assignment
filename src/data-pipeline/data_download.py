@@ -191,7 +191,10 @@ def main() -> int:
             package_dir = output_root / configured_extract_path(entry, package)
             package_zip = output_root / "corpora" / f"{package}.zip"
             if not package_dir.is_dir() and zipfile.is_zipfile(package_zip):
-                safe_extract_zip(package_zip, output_root)
+                # NLTK corpus ZIPs contain a top-level package directory (for
+                # example, `reuters/...`), so extract into the configured
+                # corpus directory's parent (`raw/corpora`), not `raw`.
+                safe_extract_zip(package_zip, package_dir.parent)
             if package_dir.is_dir():
                 print(f"NLTK corpus package '{package}' is available at: {display_path(package_dir)}")
             else:
@@ -200,7 +203,7 @@ def main() -> int:
                     raise ValueError(f"NLTK could not download corpus package: {package}")
                 # Some NLTK download states leave the archive without unpacking it.
                 if not package_dir.is_dir() and zipfile.is_zipfile(package_zip):
-                    safe_extract_zip(package_zip, output_root)
+                    safe_extract_zip(package_zip, package_dir.parent)
                 if not package_dir.is_dir():
                     raise FileNotFoundError(
                         f"NLTK download completed but the configured extract path was not found: {package_dir}"

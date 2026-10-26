@@ -49,13 +49,22 @@ def _read_text(path: Path, encoding: str) -> tuple[str, str]:
     return str(match), match.encoding or "detected"
 
 
-def _source_files(input_dir: Path, recursive: bool) -> list[Path]:
-    iterator = input_dir.rglob("*.txt") if recursive else input_dir.glob("*.txt")
+def _source_files(
+    input_dir: Path,
+    recursive: bool,
+    include_extensionless: bool = False,
+    ignored_files: list[str] | None = None,
+) -> list[Path]:
+    iterator = input_dir.rglob("*") if recursive else input_dir.glob("*")
+    ignored = {item.replace("\\", "/").strip("/") for item in (ignored_files or [])}
     return sorted(
         path
         for path in iterator
         if path.is_file()
         and not any(part.startswith(".") for part in path.relative_to(input_dir).parts)
+        and (path.suffix.casefold() == ".txt" or (include_extensionless and not path.suffix))
+        and path.name not in ignored
+        and path.relative_to(input_dir).as_posix() not in ignored
     )
 
 
@@ -110,7 +119,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--recursive",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Search subfolders for .txt files.",
+        help="Search subfolders for source files.",
+    )
+    parser.add_argument(
+        "--include-extensionless",
+        action="store_true",
+        help="Also clean extensionless documents (useful for NLTK Reuters).",
+    )
+    parser.add_argument(
+        "--ignore-file",
+        action="append",
+        default=[],
+        metavar="NAME_OR_PATH",
+        help="File name or path relative to the input directory to skip; repeat as needed.",
     )
 
     gates = parser.add_argument_group("document quality gates")
@@ -179,9 +200,15 @@ def run(args: argparse.Namespace) -> int:
         for word in args.remove_word
     ]
     regex_patterns = [re.compile(pattern) for pattern in args.remove_regex]
-    source_files = _source_files(input_dir, args.recursive)
+    source_files = _source_files(
+        input_dir,
+        args.recursive,
+        include_extensionless=args.include_extensionless,
+        ignored_files=args.ignore_file,
+    )
     if not source_files:
-        raise ValueError(f"No .txt files found under {input_dir}")
+        description = ".txt or extensionless files" if args.include_extensionless else ".txt files"
+        raise ValueError(f"No {description} found under {input_dir}")
 
     documents: dict[str, dict] = {}
     encodings: dict[str, str] = {}

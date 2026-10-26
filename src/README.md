@@ -82,6 +82,19 @@ Context size `1` gives a bigram-style neural context; `2` gives a trigram-style 
 Each override writes to its own `results/<name>_ffnn_ctx<N>/` folder, and the context size is
 recorded in `runs.csv`, `summary.csv`, and the saved config. The option applies to FFNN only.
 
+To run several FFNN context sizes in one experiment, add a top-level list beside `seeds` in
+the YAML config:
+
+```yaml
+seeds: [13, 42, 2026]
+context_sizes: [1, 2, 4]
+```
+
+Each configured FFNN is trained once per context size and seed; other configured models run
+once per seed. Checkpoints and histories include the context size in their filenames, and the
+run table reports it as a separate result column. `--context-size N` still overrides the list
+for a one-context run.
+
 For a quicker run, pass `--train-percent` to use only the first portion of the training split;
 validation and test data remain complete:
 

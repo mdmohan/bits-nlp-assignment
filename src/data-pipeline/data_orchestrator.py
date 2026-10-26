@@ -70,7 +70,8 @@ def _manifest_source(corpus: str, manifest_path: Path, raw_root: Path) -> Path |
         package_dir = raw_root / configured_extract_path(entry, package)
         archive_path = corpora_root / f"{package}.zip"
         if not package_dir.is_dir() and zipfile.is_zipfile(archive_path):
-            safe_extract_zip(archive_path, raw_root)
+            # NLTK package archives contain the package folder at their root.
+            safe_extract_zip(archive_path, package_dir.parent)
         return package_dir if package_dir.is_dir() else None
     if kind == "url":
         corpus_dir = corpora_root / corpus
@@ -104,7 +105,8 @@ def _manifest_source(corpus: str, manifest_path: Path, raw_root: Path) -> Path |
 
 def command_for_pipeline(corpus: str, output_root: Path, ratios: list[float], seed: int,
                          input_path: Path | None, clean: bool, rare_check: bool,
-                         verbose: bool, ignore_files: list[str]) -> list[str]:
+                         verbose: bool, ignore_files: list[str],
+                         include_extensionless: bool = False) -> list[str]:
     command = [
         sys.executable,
         str(SCRIPT_DIR / "data_pipeline.py"),
@@ -115,6 +117,8 @@ def command_for_pipeline(corpus: str, output_root: Path, ratios: list[float], se
         command.extend(("--in", str(input_path)))
     if clean:
         command.append("--clean")
+    if include_extensionless:
+        command.append("--include-extensionless")
     for ignored in ignore_files:
         command.extend(("--ignore-file", ignored))
     command.extend(("--load", "--split-ratios", *(str(ratio) for ratio in ratios), "--seed", str(seed)))
@@ -157,6 +161,9 @@ def run(args: argparse.Namespace) -> int:
     ignore_files = manifest_entry.get("ignore-files", [])
     if not isinstance(ignore_files, list) or any(not isinstance(item, str) for item in ignore_files):
         raise ValueError(f"Corpus '{corpus}' ignore-files must be a list of file names or relative paths")
+    include_extensionless = manifest_entry.get("include-extensionless", False)
+    if not isinstance(include_extensionless, bool):
+        raise ValueError(f"Corpus '{corpus}' include-extensionless must be true or false")
 
     corpus_output = output_root / corpus
     database_path = corpus_output / f"{corpus}.db"
@@ -190,7 +197,8 @@ def run(args: argparse.Namespace) -> int:
     source_path = _manifest_source(corpus, manifest_path, raw_root)
     if source_path is not None:
         command = command_for_pipeline(
-            corpus, output_root, ratios, seed, source_path, clean, rare_check, verbose, ignore_files
+            corpus, output_root, ratios, seed, source_path, clean, rare_check, verbose,
+            ignore_files, include_extensionless,
         )
         print(f"Using raw source: {display_path(source_path)}", flush=True)
         run_pipeline(command, f"{corpus}: prepare local source")
@@ -205,6 +213,8 @@ def run(args: argparse.Namespace) -> int:
     ]
     if clean:
         command.append("--clean")
+    if include_extensionless:
+        command.append("--include-extensionless")
     for ignored in ignore_files:
         command.extend(("--ignore-file", ignored))
     command.extend(("--load", "--split-ratios", *(str(ratio) for ratio in ratios), "--seed", str(seed)))

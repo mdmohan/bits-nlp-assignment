@@ -1,0 +1,86 @@
+metadata:
+  generated: '2026-10-26'
+  source_plan: docs/research_directions/data_efficiency/plan.md
+  target_tasks: docs/research_directions/data_efficiency/plan.md
+summary:
+  total_plan_items: 12
+  covered_plan_items: 12
+  missing_plan_items: 0
+  coverage_percentage: 100.0
+  total_tasks_generated: 30
+  orphan_tasks: 0
+phases:
+  - phase_id: Phase-1
+    phase_name: Corpus intake and provenance
+    items:
+      - item_id: '1.1'
+        description: Suite configuration and preflight
+        source_requirements: [REQ-001, REQ-013, REQ-015]
+        tasks: [T001, T002]
+      - item_id: '1.2'
+        description: Recover and freeze document partitions
+        source_requirements: [REQ-002, REQ-015]
+        tasks: [T003, T004, T005]
+  - phase_id: Phase-2
+    phase_name: Nested budgets and bounded data access
+    items:
+      - item_id: '2.1'
+        description: Budget and vocabulary manifests
+        source_requirements: [REQ-003, REQ-004]
+        tasks: [T006, T007]
+      - item_id: '2.2'
+        description: Indexed inputs and count-storage limits
+        source_requirements: [REQ-014]
+        tasks: [T008, T009]
+  - phase_id: Phase-3
+    phase_name: Canonical models and shared evaluation
+    items:
+      - item_id: '3.1'
+        description: One reader and one prediction-event contract
+        source_requirements: [REQ-007, REQ-010]
+        tasks: [T010, T011]
+      - item_id: '3.2'
+        description: Neural and statistical adapters
+        source_requirements: [REQ-005, REQ-006, REQ-007]
+        tasks: [T012, T013]
+  - phase_id: Phase-4
+    phase_name: Automated reproducible execution
+    items:
+      - item_id: '4.1'
+        description: Suite entry point and run lifecycle
+        source_requirements: [REQ-013, REQ-015]
+        tasks: [T014, T015, T016]
+      - item_id: '4.2'
+        description: Selection scheduling and test freeze
+        source_requirements: [REQ-003, REQ-008, REQ-009, REQ-013, REQ-015]
+        tasks: [T017, T018, T019]
+  - phase_id: Phase-5
+    phase_name: Diagnostics tables and graphs
+    items:
+      - item_id: '5.1'
+        description: Frequency and sequence analysis
+        source_requirements: [REQ-011]
+        tasks: [T020, T021]
+      - item_id: '5.2'
+        description: Result schema and offline reporting
+        source_requirements: [REQ-010, REQ-012]
+        tasks: [T022, T023]
+  - phase_id: Phase-6
+    phase_name: Verification and rollout
+    items:
+      - item_id: '6.1'
+        description: Regression checks and pilot
+        source_requirements: [REQ-016]
+        tasks: [T024, T025, T026, T027]
+      - item_id: '6.2'
+        description: Documentation and production gate
+        source_requirements: [REQ-001, REQ-012, REQ-015, REQ-016]
+        tasks: [T028, T029, T030]
+missing_plan_items: []
+orphan_tasks: []
+validation:
+  passed: true
+  scope: Planning traceability only; all implementation tasks remain unchecked.
+  errors: []
+  warnings:
+    - Production execution depends on the provenance and resource gates in the plan.

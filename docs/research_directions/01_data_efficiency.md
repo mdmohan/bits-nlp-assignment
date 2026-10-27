@@ -43,17 +43,17 @@ No manual class labels are needed. The next word in each sentence is the predict
 
 Create disjoint training-pool, validation, and test document sets. A proposed starting allocation is approximately 80/10/10 by document, with genre representation preserved. Audit normalized exact duplicates and near-duplicate sentences or documents before freezing the split. Document the similarity rule, adjudication, and removals. Shared individual words and short common phrases do not by themselves constitute duplicate documents.
 
-Construct nested training subsets from the training pool, for example 10%, 25%, 50%, and 100%. Select whole documents in a seeded, genre-aware order. Report actual token counts because document percentages do not imply exact token percentages. Keep validation and test documents unchanged across budgets.
+Construct nested training subsets from the training pool at 10%, 20%, 30%, 40%, 50%, 60%, 70%, 80%, 90%, and 100%. Each step adds 10 percentage points of the original training pool, not 10% of the remaining documents. Select whole documents in a seeded, genre-aware order and report rounding aliases honestly. Report actual token counts because document percentages do not imply exact token percentages. Keep validation and test documents unchanged across budgets.
 
-### Controlling Vocabulary across Training Budgets
+### Training-Only Vocabulary at Each Budget
 
-Changing the output vocabulary changes the prediction task, so perplexities from different vocabulary policies are not directly interchangeable.
+Following the selected `per_budget` protocol, build a vocabulary from each budget's own training subset. The 10% condition uses only its 10% subset; the 20% condition rebuilds from its cumulative 20%, continuing through 100%. Never use later-budget, validation, or test text to select a run's lexical inventory.
 
-For the primary controlled experiment, build a fixed vocabulary from the smallest training subset only. Replace its singleton words with `<UNK>` so that unknown-token behaviour is learned, then apply this vocabulary to every larger training subset and to validation/test text. Use the same predicted token set for all models and budgets.
+Keep the vocabulary-construction rule fixed across budgets, initially `min_freq=2`. Replace singleton words in the current training subset with `<UNK>` so that unknown-token behaviour is learned, then apply that budget's vocabulary to training, validation, and test text. Verify that unknown-token training examples exist and resolve degenerate cases before final evaluation. All model families, tuning trials, and final seeds at the same corpus/budget must share its vocabulary and predicted token set. Persist the training-subset source, deterministic token IDs, vocabulary hash, target-support hash, and original-word OOV flags for every budget.
 
-This isolates the effect of additional observations under a fixed lexical inventory. Its limitation is important: larger datasets cannot expand the vocabulary, so the experiment does not measure the full practical benefit of obtaining more text. Report the resulting OOV rate and avoid aggressive cutoffs that collapse much of the corpus into `<UNK>`.
+With nested training subsets, the same minimum count, and no vocabulary cap, vocabulary can grow or remain unchanged and held-out OOV cannot increase. Token IDs may change between budgets; do not reuse weights or encoded/mapped-count caches across vocabulary hashes. Train each model from scratch at each budget.
 
-An optional secondary experiment can rebuild vocabulary at each budget. Report it separately as an end-to-end data-growth experiment, not as a directly comparable fixed-vocabulary perplexity curve. Within each budget, all models must still share one vocabulary.
+This is an end-to-end data-growth experiment, measuring more observations plus lexical expansion. Changing the vocabulary changes `<UNK>` mapping, prediction support, and neural parameter counts. Raw cross-budget perplexities therefore do not describe an identical prediction task, even with unchanged test text. Report vocabulary size, OOV, and parameter count alongside each point; compare models directly within a budget and avoid attributing cross-budget gains solely to more observations. Neither the earlier fixed-smallest design nor a full-training-pool vocabulary arm is part of the selected sweep.
 
 ## Systems and Intervention
 
@@ -66,13 +66,13 @@ An optional secondary experiment can rebuild vocabulary at each budget. Report i
 
 The intervention is controlled access to additional training text, not a new architecture. This is an empirical characterization study rather than a claim of algorithmic novelty.
 
-Use a modest, fixed neural architecture across budgets. A one-layer LSTM with 128-dimensional embeddings and 256 hidden units is a starting configuration, not a required or proven-optimal choice. Keep the optimizer, maximum training policy, and early-stopping rule documented.
+Use modest, fixed embedding/hidden dimensions and layer counts across budgets, with vocabulary-dependent layers sized to each budget. A one-layer LSTM with 128-dimensional embeddings and 256 hidden units is a starting configuration, not a required or proven-optimal choice. Report changing parameter counts and keep the optimizer, maximum training policy, and early-stopping rule documented.
 
 Choose smoothing and neural hyperparameters using validation data only. Use the same candidate search space and tuning allowance at each budget. This estimates performance under a consistent model-selection procedure. A secondary fixed-hyperparameter analysis can isolate data growth more strictly, but is not necessary for the minimum study.
 
 ## Experimental Protocol
 
-1. Freeze document partitions, duplicate handling, preprocessing, vocabulary, and the nested training-subset order.
+1. Freeze document partitions, duplicate handling, preprocessing, the vocabulary-construction rule, and the nested training-subset order. Build and freeze a separate training-only vocabulary for each budget, shared by all its models.
 2. Define frequency groups from training counts, retaining original-word OOV flags before `<UNK>` replacement.
 3. Fit every required model at every training budget.
 4. Select hyperparameters and neural stopping checkpoints using validation data.
@@ -88,11 +88,11 @@ Train to the same validation-based stopping rule with a documented maximum budge
 
 Required outputs are held-out perplexity, vocabulary size, OOV rate, and runtime. Split runtime into fitting/training and test scoring, and record hardware, device, batch size, and timing boundaries.
 
-Compute corpus perplexity from total negative log probability divided by the number of scored tokens, then exponentiate. Do not average sentence perplexities. Score identical target words and one sentence-ending token across models; exclude beginning-of-sentence context and batch padding from the denominator.
+Compute corpus perplexity from total negative log probability divided by the number of scored tokens, then exponentiate. Do not average sentence perplexities. Within each budget, score identical mapped target words and one sentence-ending token across models; exclude beginning-of-sentence context and batch padding from the denominator. Keep raw event IDs and counts aligned across budgets while recording their changing mapped targets.
 
 If an unsmoothed model assigns zero probability to any evaluated event, its full-test perplexity is infinite. Report that honestly, together with the fraction of zero-probability events. Do not replace zeros with small constants while still calling the model unsmoothed.
 
-Useful supplementary measurements include negative log-likelihood by context-frequency bucket, throughput, and the gap between validation and training loss. Define rare and unseen groups before final evaluation. For cross-budget comparisons, distinguish fixed groups defined at the smallest budget from groups recomputed at each budget; they answer different questions.
+Useful supplementary measurements include negative log-likelihood by context-frequency bucket, throughput, and the gap between validation and training loss. Define rare and unseen rules before final evaluation. Recompute mapped-sequence groups and known-word/OOV status for each budget. A separate fixed-reference view uses original-word sequence counts from the smallest budget and stable raw event IDs; distinguish it from current-budget mapped groups and report membership counts. Fixed reference groups do not remove the changing-support limitation.
 
 ## Required Ablation
 
@@ -111,7 +111,8 @@ Select examples using declared categories and a reproducible selection rule. Do 
 ## Expected Research Artifacts
 
 - Dataset statistics and training-budget tables with exact document and token counts.
-- Learning curves of test perplexity against training tokens, with neural seed variability shown.
+- End-to-end learning curves of test perplexity against training tokens, with neural seed variability and changing-support caveats shown.
+- Vocabulary-size and validation/test OOV curves alongside the perplexity curves.
 - Runtime-versus-quality plots, with infinite baseline perplexities explicitly annotated.
 - Smoothing-ablation results at matched budgets.
 - Frequency-conditioned loss and zero-probability summaries.
@@ -121,11 +122,11 @@ These are proposed outputs, not expected numerical outcomes.
 
 ## Interpretation, Risks, and Limits
 
-A crossover would support a conditional recommendation tied to this corpus, vocabulary, architecture, and training protocol. It would not establish a universal data threshold for neural language modelling.
+A crossover would support a conditional recommendation tied to this corpus, per-budget vocabulary policy, architecture, and training protocol. Comparisons between models at each budget share a prediction task, but changes across budgets include lexical expansion. A crossover would not establish a universal data threshold for neural language modelling.
 
 If the neural model never wins, investigate optimization, overfitting, and model capacity using validation evidence before interpreting the result. Do not redesign the system repeatedly in response to final test scores. Conversely, an early neural advantage does not prove that smoothing is unnecessary.
 
-Main limitations include the fixed restricted vocabulary, one corpus selection, a small number of neural seeds, training-subset sampling variability, and hardware-specific timing. Natural sentences within documents are dependent; token-level resampling can overstate precision. Optional paired document bootstrap intervals should be labelled exploratory and distinguished from seed variability.
+Main limitations include changing prediction support and `<UNK>` mappings across budgets, vocabulary-dependent neural capacity, corpus selection, a small number of neural seeds, training-subset sampling variability, and hardware-specific timing. Natural sentences within documents are dependent; token-level resampling can overstate precision. Optional paired document bootstrap intervals should be labelled exploratory and distinguished from seed variability.
 
 ## Fit with PS-1
 

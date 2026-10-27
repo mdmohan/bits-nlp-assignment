@@ -1,0 +1,92 @@
+batch_id: B01-nltk-pilot
+date: '2026-10-26'
+completed_tasks: [T013, T014]
+partially_completed_tasks: [T001, T002, T003, T004, T005, T006, T007, T008, T009, T010, T011, T012, T015, T016, T017, T018, T019, T020, T021, T022, T023, T024, T025, T026, T027, T028, T029]
+blocked_tasks:
+  - task_id: T030
+    reason: Deferred broader research rollout; four corpora are excluded by the latest user scope.
+    required_task_ids: []
+files_changed:
+  T013:
+    - {file: src/lm/experiments.py, change_type: created, description: Existing count/neural adapters in a staged budget sweep.}
+    - {file: src/lm/cli.py, change_type: modified, description: Optional shared support and structured evaluation.}
+    - {file: src/lm/statistical/ngram.py, change_type: modified, description: Explicit prediction support and normalized add-k denominator.}
+  T014:
+    - {file: src/run.py, change_type: modified, description: Opt-in suite commands with legacy entry point retained.}
+partial_task_details: checkpoints/tasks-to-impl.yaml
+upstream_artifacts_consumed:
+  T013:
+    - {artifact: docs/research_directions/01_data_efficiency.md, used_for: Cold starts and shared within-budget vocabulary.}
+    - {artifact: docs/research_directions/data_efficiency/plan.md, used_for: Existing-model reuse and statistical adapter boundaries.}
+  T014:
+    - {artifact: docs/research_directions/data_efficiency/plan.md, used_for: Staged suite entry point and immutable test gate.}
+evidence_mapping:
+  T013:
+    - {upstream: 'plan.md#neural-and-statistical-adapters', output: src/lm/experiments.py, evidence: 'test_experiments.ExperimentTests.test_sweep_seal_evaluation_and_verified_resume'}
+    - {upstream: 'plan.md#one-reader-and-one-prediction-event-contract', output: src/lm/statistical/ngram.py, evidence: 'test_evaluation.ScoringContractTests.test_addk_normalizes_on_noncontiguous_target_ids'}
+  T014:
+    - {upstream: 'plan.md#suite-entry-point-and-run-lifecycle', output: src/run.py, evidence: Synthetic staged suite and CLI dry-run.}
+traceability:
+  - {requirement: REQ-001, plan_item: '1.1', task: T001, files: [src/configs/data_efficiency_nltk_pilot.yaml], status: pilot_only}
+  - {requirement: REQ-002, plan_item: '1.2', task: T005, files: [src/lm/preparation.py], status: pilot_only}
+  - {requirement: REQ-003, plan_item: '2.1', task: T006, files: [src/lm/preparation.py], status: partial}
+  - {requirement: REQ-004, plan_item: '2.1', task: T007, files: [src/lm/data.py, src/lm/experiments.py], status: partial}
+  - {requirement: REQ-005, plan_item: '3.2', task: T012, files: [src/lm/neural/trainer.py], status: partial}
+  - {requirement: REQ-006, plan_item: '3.2', task: T013, files: [src/lm/experiments.py, src/lm/statistical/ngram.py], status: completed}
+  - {requirement: REQ-007, plan_item: '3.1', task: T011, files: [src/lm/evaluation.py, src/lm/cli.py], status: partial}
+  - {requirement: REQ-008, plan_item: '4.2', task: T017, files: [src/lm/experiments.py], status: pilot_only}
+  - {requirement: REQ-009, plan_item: '4.2', task: T018, files: [src/lm/experiments.py], status: partial}
+  - {requirement: REQ-010, plan_item: '5.2', task: T022, files: [src/lm/reporting.py], status: partial}
+  - {requirement: REQ-011, plan_item: '5.1', task: T021, files: [src/lm/evaluation.py], status: partial}
+  - {requirement: REQ-012, plan_item: '5.2', task: T023, files: [src/lm/reporting.py], status: partial}
+  - {requirement: REQ-013, plan_item: '4.1', task: T014, files: [src/run.py, src/lm/experiments.py], status: completed}
+  - {requirement: REQ-014, plan_item: '2.2', task: T008, files: [src/lm/data.py, src/lm/preparation.py], status: partial}
+  - {requirement: REQ-015, plan_item: '4.1', task: T015, files: [src/lm/experiments.py], status: partial}
+  - {requirement: REQ-016, plan_item: '6.1', task: T027, files: [src/tests/test_experiments.py, colab/nltk_data_efficiency.ipynb], status: pilot_validated}
+pilot:
+  corpora: [gutenberg, webtext, inaugural]
+  budgets_percent: [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+  neural_epochs: 3
+  final_seeds: [42]
+  models: [bigram_mle, trigram_mle, trigram_addk, lstm, ffnn]
+  expected_final_bundles: 150
+  expected_addk_tuning_fits: 90
+  prepared_documents:
+    gutenberg: {train_pool: 13, valid: 1, test: 4}
+    webtext: {train_pool: 2, valid: 1, test: 3}
+    inaugural: {train_pool: 43, valid: 5, test: 12}
+  source_files_modified: false
+  webtext_repair: Preserve test bytes; exclude all training variants of test source groups.
+  bundle_sha256: fa6239cd97a372355a19fe45718d8b8aad30c9b6852e6525ea1df796af5398a1
+  notebook_url: https://colab.research.google.com/drive/1aZCcFFsEsX-a3UfZcAfn8mgUnDeLQbOW
+  runtime: Tesla T4; Python 3.13.16; Torch 2.11.0+cu130
+  remote_status: Completed training, sealing, held-out evaluation and reporting; verified locally.
+  drive_destination: MyDrive/NLP_Experiments/nltk_data_efficiency_pilot_v2
+  local_results: results/colab_imports/20261026T175208Z/nltk_data_efficiency_pilot_v2
+  local_verification: results/colab_imports/20261026T175208Z/verification.json
+  verified_final_bundles: 150
+  verified_addk_tuning_fits: 90
+  verified_neural_histories: 60
+  verified_epochs_per_neural_fit: 3
+  verified_artifact_hashes: 2434
+  verified_input_bundle_member_hashes: 32
+  zip_member_crcs: passed
+protocol_violation: false
+errors: []
+warnings:
+  - Three epochs and one seed are a pilot, not convergence or variability evidence.
+  - WebText has only two training groups; rounded budget aliases are not distinct data sizes.
+  - Retained raw/cleaned variants change within-source weighting; test variants remain unchanged.
+  - Cross-budget perplexity includes vocabulary/output-support growth.
+  - MinHash near-duplicate screening does not prove exhaustive absence of near duplicates.
+  - Category-based sequence analysis and full research acceptance remain incomplete.
+  - Colab preview/export cells were unreliable; the complete results folder was retrieved through three Drive ZIP parts and verified locally.
+  - Training histories and fitting statistics are included; separate final training-set rescoring was not performed.
+test_results:
+  focused_regressions:
+    command: PYTHONPATH=src ~/.venvs/nlp-lm/bin/python -B -m unittest discover -s src/tests -v
+    python: 3.12.14
+    passed: 16
+    failed: 0
+    skipped: 0
+    failures: []

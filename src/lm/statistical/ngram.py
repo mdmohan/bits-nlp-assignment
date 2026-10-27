@@ -62,11 +62,23 @@ class NgramLM:
 
     def __init__(self, order: int, vocab_size: int, bos: int, eos: int,
                  smoothing: str = "mle", k: float = DEFAULT_LAPLACE_K,
-                 discount: float = DEFAULT_KN_DISCOUNT):
+                 discount: float = DEFAULT_KN_DISCOUNT, allowed_target_ids=None):
         if smoothing not in {"mle", "laplace", "backoff", "kn"}:
             raise ValueError(f"unknown smoothing: {smoothing}")
+        if order < 1 or vocab_size < 1:
+            raise ValueError("order and vocab_size must be positive")
+        if smoothing == "laplace" and (not math.isfinite(k) or k <= 0):
+            raise ValueError("add-k must be finite and positive")
+        self.target_ids = tuple(range(vocab_size))
+        if allowed_target_ids is not None:
+            self.target_ids = tuple(sorted(set(allowed_target_ids)))
+            if not self.target_ids or any(target < 0 or target >= vocab_size for target in self.target_ids):
+                raise ValueError("allowed target IDs must be nonempty and within the vocabulary")
+            if eos not in self.target_ids or bos in self.target_ids:
+                raise ValueError("target support must include EOS and exclude BOS")
+        self._target_set = frozenset(self.target_ids)
         self.order = order
-        self.V = vocab_size
+        self.V = len(self.target_ids)
         self.bos = bos
         self.eos = eos
         self.smoothing = smoothing
@@ -94,6 +106,8 @@ class NgramLM:
         """Fit on content token IDs (without BOS/EOS) for every order up to this order."""
         t0 = time.perf_counter()
         for ids in encoded:
+            if any(token not in self._target_set for token in ids):
+                raise ValueError("training content contains a disallowed target ID")
             for n in range(1, self.order + 1):
                 for g in ngrams(ids, n, self.bos, self.eos):
                     self.ngram_counts[n][g] += 1
@@ -199,6 +213,8 @@ class NgramLM:
     # ---------------------------------------------------------- interface
     def prob(self, g: tuple[int, ...]) -> float:
         """P(last token | preceding tokens) under the selected smoothing."""
+        if g[-1] not in self._target_set:
+            return 0.0
         if self.smoothing == "mle":
             return self._p_mle(g)
         if self.smoothing == "laplace":
@@ -242,4 +258,4 @@ class NgramLM:
         A smoothing scheme is only valid if it normalises. This is the
         cheapest way to catch mass that is discounted but never redistributed.
         """
-        return sum(self.prob(ctx + (w,)) for w in range(self.V))
+        return sum(self.prob(ctx + (target,)) for target in self.target_ids)

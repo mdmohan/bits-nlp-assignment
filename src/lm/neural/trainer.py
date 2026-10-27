@@ -14,6 +14,8 @@ import numpy as np
 import torch
 from torch import nn
 
+from ..data import mask_logits
+
 
 @dataclass
 class TrainConfig:
@@ -41,18 +43,20 @@ def get_device(name: str = "auto") -> torch.device:
 
 
 class Trainer:
-    def __init__(self, model: nn.Module, config: TrainConfig, pad_id: int, device: torch.device):
+    def __init__(self, model: nn.Module, config: TrainConfig, pad_id: int, device: torch.device,
+                 allowed_target_ids=None):
         self.model = model.to(device)
         self.config = config
         self.device = device
         # Sum over tokens so perplexity is total NLL / total tokens, never an average of averages.
         self.loss_fn = nn.CrossEntropyLoss(ignore_index=pad_id, reduction="sum")
         self.pad_id = pad_id
+        self.allowed_target_ids = allowed_target_ids
         self.optimizer = torch.optim.Adam(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
 
     def _batch_loss(self, inputs, targets):
         inputs, targets = inputs.to(self.device), targets.to(self.device)
-        logits = self.model(inputs)
+        logits = mask_logits(self.model(inputs), self.allowed_target_ids)
         total_nll = self.loss_fn(logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
         num_tokens = (targets != self.pad_id).sum().item()
         return total_nll, num_tokens
@@ -113,7 +117,7 @@ class Trainer:
             "tokens": total_tokens,
         }
 
-    def fit(self, train_loader, valid_loader) -> list[dict]:
+    def fit(self, train_loader, valid_loader, epoch_callback=None) -> list[dict]:
         """Train with early stopping on validation perplexity; keeps the best weights."""
         history = []
         best_ppl, best_state, epochs_without_improvement = math.inf, None, 0
@@ -128,6 +132,8 @@ class Trainer:
 
             history.append({"epoch": epoch, "train_ppl": train_ppl, "valid_ppl": valid_ppl, "seconds": seconds})
             print(f"  epoch {epoch:2d} | train ppl {train_ppl:8.2f} | valid ppl {valid_ppl:8.2f} | {seconds:.1f}s")
+            if epoch_callback is not None:
+                epoch_callback(history[-1], self.model)
 
             if valid_ppl < best_ppl:
                 best_ppl, epochs_without_improvement = valid_ppl, 0

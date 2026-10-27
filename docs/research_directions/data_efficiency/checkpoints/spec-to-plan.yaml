@@ -1,0 +1,70 @@
+metadata:
+  generated: '2026-10-26'
+  source_spec: docs/research_directions/01_data_efficiency.md
+  target_plan: docs/research_directions/data_efficiency/plan.md
+  requirement_ids: Local planning labels extracted from Direction 1 and the user request.
+summary:
+  total_requirements: 16
+  covered_requirements: 16
+  missing_requirements: 0
+  coverage_percentage: 100.0
+requirements:
+  - req_id: REQ-001
+    req_description: Register all seven corpora with explicit files and eligibility.
+    plan_items: ['1.1', '6.2']
+  - req_id: REQ-002
+    req_description: Recover document provenance and preserve audited evaluation partitions.
+    plan_items: ['1.2']
+  - req_id: REQ-003
+    req_description: Use nested document budgets and independent cold-start fits.
+    plan_items: ['2.1', '4.2']
+  - req_id: REQ-004
+    req_description: Build training-only vocabulary per budget, share it within that budget and retain hashes/OOV metadata.
+    plan_items: ['2.1']
+  - req_id: REQ-005
+    req_description: Run required model families with an optional FFNN extension.
+    plan_items: ['3.2']
+  - req_id: REQ-006
+    req_description: Select one canonical neural implementation with evidence-based reuse.
+    plan_items: ['3.2']
+  - req_id: REQ-007
+    req_description: Share preprocessing, within-budget target support and aligned raw-event scoring.
+    plan_items: ['3.1', '3.2']
+  - req_id: REQ-008
+    req_description: Select settings only on validation under a consistent policy.
+    plan_items: ['4.2']
+  - req_id: REQ-009
+    req_description: Separate seeds and measure actual execution conditions.
+    plan_items: ['4.2']
+  - req_id: REQ-010
+    req_description: Record correct metrics, zero events, costs and token accounting.
+    plan_items: ['3.1', '5.2']
+  - req_id: REQ-011
+    req_description: Produce frequency diagnostics, smoothing ablation and reproducible cases.
+    plan_items: ['5.1']
+  - req_id: REQ-012
+    req_description: Generate corpus-specific plots and offline reports.
+    plan_items: ['5.2', '6.2']
+  - req_id: REQ-013
+    req_description: Automate execution, state tracking and verified resumption.
+    plan_items: ['1.1', '4.1', '4.2']
+  - req_id: REQ-014
+    req_description: Provide indexed inputs and bounded count/scoring resource strategies.
+    plan_items: ['2.2']
+  - req_id: REQ-015
+    req_description: Preserve source/config/code/environment provenance and immutable outputs.
+    plan_items: ['1.1', '1.2', '4.1', '4.2', '6.2']
+  - req_id: REQ-016
+    req_description: Supply verification, pilot, documentation and rollout gates.
+    plan_items: ['6.1', '6.2']
+missing_requirements: []
+orphan_plan_items: []
+validation:
+  passed: true
+  scope: Planning traceability only; implementation and corpus eligibility are not certified.
+  errors: []
+  warnings:
+    - Corpus provenance and resources require implementation-time verification.
+    - Imported stores are under data/processed; Python 3.12 needs a verified SQLite-shelve reader, and ROCStories has no database.
+    - Movie Reviews is a provisional primary corpus, pending eligibility and assignment approval.
+    - Per-budget vocabulary changes prediction support; cross-budget PPL measures end-to-end growth, not a fixed-target intervention.

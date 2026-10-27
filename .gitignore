@@ -7,8 +7,25 @@ __pycache__/
 *.db
 *.tgz
 *.zip
+*.zip.sha256
 *.gz
 *.xml
 # Model checkpoints are large and reproducible with run.py
 *.pt
 .ipynb_checkpoints
+
+# Keep corpus contents local; retain documentation and import provenance.
+/data/raw/*
+!/data/raw/readme.txt
+/data/processed/*
+!/data/processed/readme.txt
+!/data/processed/corpus_import_manifest.json
+
+# Generated model state and prepared corpus databases.
+*.pkl
+*.pickle
+*.sqlite
+*.sqlite-*
+*.db-*
+
+/results/*

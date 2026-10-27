@@ -15,6 +15,14 @@ PAD, UNK, BOS, EOS = "<pad>", "<unk>", "<s>", "</s>"
 Sentence = list[str]
 
 
+def mask_logits(logits: torch.Tensor, allowed_target_ids=None) -> torch.Tensor:
+    if allowed_target_ids is None:
+        return logits
+    excluded = torch.ones(logits.size(-1), dtype=torch.bool, device=logits.device)
+    excluded[list(allowed_target_ids)] = False
+    return logits.masked_fill(excluded, -torch.inf)
+
+
 @dataclass
 class Corpus:
     train: list[Sentence]
@@ -106,6 +114,24 @@ class Vocab:
     def __len__(self):
         return len(self.itos)
 
+    @classmethod
+    def from_list(cls, words):
+        if words[:4] != [PAD, UNK, BOS, EOS] or len(set(words)) != len(words):
+            raise ValueError("Invalid vocabulary: expected unique words and standard special-token IDs")
+        vocab = cls.__new__(cls)
+        vocab.itos = list(words)
+        vocab.stoi = {word: index for index, word in enumerate(words)}
+        return vocab
+
+    @property
+    def fingerprint(self):
+        from .preparation import fingerprint
+        return fingerprint(self.itos)
+
+    @property
+    def allowed_target_ids(self):
+        return [index for index, word in enumerate(self.itos) if word not in {PAD, BOS}]
+
     def __contains__(self, word):
         return word in self.stoi
 
@@ -127,10 +153,13 @@ class Vocab:
 
     def oov_rate(self, sentences: list[Sentence]) -> float:
         """Fraction of word tokens that are not in the vocabulary."""
-        tokens = [word for sentence in sentences for word in sentence]
-        if not tokens:
+        total = unknown = 0
+        for sentence in sentences:
+            total += len(sentence)
+            unknown += sum(word not in self.stoi for word in sentence)
+        if not total:
             return 0.0
-        return sum(word not in self.stoi for word in tokens) / len(tokens)
+        return unknown / total
 
 
 # ---------------------------------------------------------------- batching
@@ -140,13 +169,20 @@ class SentenceDataset(Dataset):
     """Each item is (input, target): '<s> w1 .. wn' predicts 'w1 .. wn </s>'."""
 
     def __init__(self, sentences: list[Sentence], vocab: Vocab):
-        self.items = [torch.tensor(vocab.encode(sentence)) for sentence in sentences if sentence]
+        self.sentences = sentences
+        self.vocab = vocab
+        if hasattr(sentences, "lengths"):
+            self.positions = range(len(sentences))
+            self.lengths = sentences.lengths
+        else:
+            self.positions = [index for index, sentence in enumerate(sentences) if sentence]
+            self.lengths = [len(sentences[index]) + 2 for index in self.positions]
 
     def __len__(self):
-        return len(self.items)
+        return len(self.positions)
 
     def __getitem__(self, index):
-        ids = self.items[index]
+        ids = torch.tensor(self.vocab.encode(self.sentences[self.positions[index]]))
         return ids[:-1], ids[1:]
 
 
@@ -157,7 +193,7 @@ class LengthBucketBatchSampler(Sampler[list[int]]):
                  max_padded_tokens: int | None = None):
         if batch_size < 1:
             raise ValueError("batch_size must be at least 1")
-        self.lengths = [len(item) for item in dataset.items]
+        self.lengths = dataset.lengths
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.max_padded_tokens = max_padded_tokens or batch_size * 64
@@ -194,7 +230,8 @@ class LengthBucketBatchSampler(Sampler[list[int]]):
         return len(self._batches())
 
 
-def make_loader(sentences: list[Sentence], vocab: Vocab, batch_size: int, shuffle: bool) -> DataLoader:
+def make_loader(sentences: list[Sentence], vocab: Vocab, batch_size: int, shuffle: bool,
+                max_padded_tokens: int | None = None) -> DataLoader:
     dataset = SentenceDataset(sentences, vocab)
 
     def collate(batch):
@@ -206,6 +243,6 @@ def make_loader(sentences: list[Sentence], vocab: Vocab, batch_size: int, shuffl
 
     return DataLoader(
         dataset,
-        batch_sampler=LengthBucketBatchSampler(dataset, batch_size, shuffle),
+        batch_sampler=LengthBucketBatchSampler(dataset, batch_size, shuffle, max_padded_tokens),
         collate_fn=collate,
     )

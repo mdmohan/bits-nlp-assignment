@@ -32,6 +32,28 @@ Processing defaults to `data/processed`; download mode defaults to `data/raw`. P
 
 Only stages selected on the command line run, so files from unselected stages are not regenerated.
 
+## Imported Experiment Data
+
+For the data-efficiency pilot, use the opt-in suite in
+[the model README](../README.md#document-budget-sweep-and-colab), not this
+pipeline's download/load/split stages. Imported SQLite shelves are opened read-only
+by `lm.preparation`; original stores and exports stay unchanged. The current pilot
+selects only Gutenberg, WebText and Inaugural. Validation comes from training
+documents, and each budget has a training-only vocabulary.
+
+WebText has raw/cleaned variants crossing the supplied train/test boundary. The
+approved repair preserves test bytes and excludes every overlapping training
+source group. Derived files, checksums and the audit are written under the suite's
+`curated/webtext` directory. Variants remain grouped by source. Only two training
+groups remain after validation, so several rounded budgets are aliases. The download
+registry in `data.yaml` is unchanged.
+
+Corpus contents and generated databases are excluded from Git. A fresh clone must
+restore the original imports and matching checksum/provenance files before using
+the prepared-data suite. See the [prepared-data guide](../../data/processed/readme.txt)
+and [Colab guide](../../colab/README.md); downloading a new corpus release through
+this legacy pipeline is a new data preparation, not a reconstruction of the pilot.
+
 ## Download through the pipeline
 
 In download mode, `--in` is the YAML manifest path. The default download output is `data/raw`; override it with `--download-out`. From the project root, `--in data.yaml` resolves to the manifest in this folder if there is no `data.yaml` in the project root.

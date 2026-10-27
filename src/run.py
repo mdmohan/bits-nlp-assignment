@@ -20,7 +20,12 @@ def percentage(value: str) -> float:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train and compare neural language models.")
-    parser.add_argument("config", help="path to a YAML experiment config")
+    parser.add_argument("config", nargs="?", help="path to a legacy YAML experiment config")
+    parser.add_argument("--suite", help="path to a prepared-document sweep YAML config")
+    parser.add_argument("--stage", choices=("preflight", "prepare", "train", "seal", "evaluate", "report", "all"), default="preflight")
+    parser.add_argument("--corpora", nargs="+", help="restrict suite execution to named corpora")
+    parser.add_argument("--resume", action="store_true", help="verify and reuse completed suite fits")
+    parser.add_argument("--dry-run", action="store_true", help="display suite matrix without starting work")
     parser.add_argument(
         "--train-percent",
         type=percentage,
@@ -51,10 +56,20 @@ if __name__ == "__main__":
         ),
     )
     args = parser.parse_args()
-    run_from_config(
-        args.config,
-        train_percent=args.train_percent,
-        algorithm=args.algorithm,
-        seed_override=args.seed,
-        context_size_override=args.context_size,
-    )
+    if args.suite:
+        if args.config or args.train_percent != 100 or args.algorithm or args.seed is not None or args.context_size is not None:
+            parser.error("Suite settings belong in its YAML; legacy runner overrides cannot be combined with --suite")
+        from lm.experiments import ExperimentSuite
+        ExperimentSuite(args.suite, args.corpora).run(args.stage, resume=args.resume, dry_run=args.dry_run)
+    else:
+        if not args.config:
+            parser.error("Provide a legacy config or --suite")
+        if args.corpora or args.resume or args.dry_run or args.stage != "preflight":
+            parser.error("--stage, --corpora, --resume and --dry-run require --suite")
+        run_from_config(
+            args.config,
+            train_percent=args.train_percent,
+            algorithm=args.algorithm,
+            seed_override=args.seed,
+            context_size_override=args.context_size,
+        )

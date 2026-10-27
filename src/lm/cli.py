@@ -3,7 +3,6 @@
 import argparse
 import json
 import math
-import re
 import shlex
 import sys
 import time
@@ -17,7 +16,8 @@ import yaml
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from lm.data import BOS, EOS, PAD, UNK, Vocab
+from lm.data import BOS, EOS, PAD, UNK, Vocab, mask_logits
+from lm.evaluation import evaluate_model, sentence_events
 from lm.neural import build_model
 from lm.statistical.ngram import NgramLM
 from lm.neural.trainer import get_device
@@ -51,6 +51,7 @@ class CountNGram:
         smoothing: str = "mle",
         k: float = 1.0,
         discount: float = 0.75,
+        allowed_target_ids=None,
     ):
         self.order = order
         self.smoothing = smoothing
@@ -82,6 +83,7 @@ class CountNGram:
             smoothing=smoothing,
             k=k,
             discount=discount,
+            allowed_target_ids=allowed_target_ids,
         ).fit(encoded_sentences())
         self.counts = self.model.ngram_counts[order]
         self._unigram_rank = sorted(
@@ -195,6 +197,8 @@ class LanguageModelCLI:
             "train_path": train_path.resolve(),
             "train_percent": float(config.get("train_percent", 100)),
         }
+        if "allowed_target_ids" in config:
+            info["allowed_target_ids"] = config["allowed_target_ids"]
         key = str(path)
         self.neural[key] = info
         self.active_neural = key
@@ -246,26 +250,7 @@ class LanguageModelCLI:
 
     @staticmethod
     def _read_sentences(path: Path):
-        try:
-            from nltk.tokenize import sent_tokenize
-        except ImportError:
-            sent_tokenize = None
-        with path.open(encoding="utf-8") as handle:
-            for line in handle:
-                line = line.strip()
-                if not line:
-                    continue
-                if sent_tokenize:
-                    try:
-                        sentences = sent_tokenize(line)
-                    except LookupError:
-                        sentences = re.split(r"(?<=[.!?])\s+", line)
-                else:
-                    sentences = re.split(r"(?<=[.!?])\s+", line)
-                for sentence in sentences:
-                    words = sentence.split()
-                    if words:
-                        yield words
+        yield from iter_sentences(path, lowercase=False)
 
     def load_ngram(
         self,
@@ -317,6 +302,9 @@ class LanguageModelCLI:
             flush=True,
         )
         started_at = time.perf_counter()
+        allowed_target_ids = None
+        if nn_info:
+            allowed_target_ids = nn_info.get("allowed_target_ids")
         lm = CountNGram(
             order,
             vocab,
@@ -324,6 +312,7 @@ class LanguageModelCLI:
             smoothing=smoothing,
             k=1.0 if k is None else k,
             discount=discount,
+            allowed_target_ids=allowed_target_ids,
         )
         self.ngrams[name] = {
             "name": name, "order": order, "lm": lm, "vocab": vocab,
@@ -353,14 +342,14 @@ class LanguageModelCLI:
 
     @staticmethod
     def _sentence_events(ids: list[int], order: int, bos: int, eos: int):
-        padded = [bos] * (order - 1) + ids + [eos]
-        for i in range(order - 1, len(padded)):
-            yield tuple(padded[i - order + 1:i]), padded[i]
+        yield from sentence_events(ids, order, bos, eos)
 
     @torch.no_grad()
     def _neural_scores(self, model_info: dict, contexts: list[list[int]], targets: list[int]):
         x = torch.tensor(contexts, dtype=torch.long, device=self.device)
-        logits = model_info["model"](x)[:, -1, :].float()
+        logits = mask_logits(
+            model_info["model"](x)[:, -1, :].float(), model_info.get("allowed_target_ids")
+        )
         log_probs = torch.log_softmax(logits, dim=-1)
         y = torch.tensor(targets, dtype=torch.long, device=self.device)
         losses = -log_probs.gather(1, y[:, None]).squeeze(1)
@@ -410,103 +399,62 @@ class LanguageModelCLI:
         print(f"Evaluating {path.name} with {model_label}; {progress_note}", flush=True)
         bos, eos, unk = stoi[BOS], stoi[EOS], stoi[UNK]
         order = ngram_info["order"] if ngram_info else None
-        total = sentence_count = words_count = oov = 0
-        ng_nll = 0.0
-        ng_zero = ng_correct = ng_covered = 0
-        nn_nll = 0.0
-        nn_correct = 0
-        # Only the first N rows are retained for display; scoring processes the full file.
-        rows: list[list[str]] = []
-        nn_batch: dict[int, tuple[list[list[int]], list[int], list[int]]] = {}
-        nn_rows: dict[int, tuple[int, float]] = {}
+        rows = []
+        nn_rows = {}
+        counters = {"ngram": 0, "neural": 0}
+        metric_vocab = Vocab.from_list(vocab)
 
-        def flush(length: int, final: bool = False):
-            nonlocal nn_nll, nn_correct
-            contexts, targets, indices = nn_batch[length]
-            while len(contexts) >= 256 or (final and contexts):
-                count = min(256, len(contexts))
-                cx, ty, ix = contexts[:count], targets[:count], indices[:count]
-                del contexts[:count], targets[:count], indices[:count]
-                losses, predictions = self._neural_scores(neural_info, cx, ty)
-                nn_nll += sum(losses)
-                nn_correct += sum(p == t for p, t in zip(predictions, ty))
-                for row_index, pred, loss in zip(ix, predictions, losses):
-                    if limit == 0 or row_index < limit:
-                        nn_rows[row_index] = (pred, math.exp(-loss))
+        def retain(event, family):
+            nonlocal last_progress_at
+            row_index = counters[family]
+            counters[family] += 1
+            now = time.perf_counter()
+            if row_index % 10_000 == 0 and progress_seconds and now - last_progress_at >= progress_seconds:
+                print(f"  evaluation progress ({family}): {row_index:,} events ({now - started_at:.1f}s elapsed)", flush=True)
+                last_progress_at = now
+            if limit and row_index >= limit:
+                return
+            prediction = event["prediction"]
+            probability = math.exp(event["log_probability"])
+            if family == "neural":
+                nn_rows[row_index] = (prediction, probability)
+                if ngram_info:
+                    return
+            width = 1
+            if order:
+                width = order - 1
+            prefix = [bos] * width + event["ids"][:event["position"]]
+            context_text = " ".join(vocab[token] for token in prefix[-width:])
+            predicted = "<unseen>"
+            if prediction is not None:
+                predicted = vocab[prediction]
+            rows.append([context_text, vocab[event["target"]], predicted, f"{probability:.6g}"])
 
-        for raw_words in self._read_sentences(path):
-            sentence_count += 1
-            words = [w.lower() for w in raw_words] if lowercase else raw_words
-            words_count += len(words)
-            oov += sum(w not in stoi for w in words)
-            ids = [stoi.get(w, unk) for w in words]
-            if ngram_info:
-                for event_pos, (context, target) in enumerate(self._sentence_events(ids, order, bos, eos)):
-                    probability, prediction = ngram_info["lm"].score(context, target)
-                    if probability:
-                        ng_nll -= math.log(probability)
-                    else:
-                        ng_zero += 1
-                    if prediction is not None:
-                        ng_covered += 1
-                        ng_correct += prediction == target
-                    if len(rows) < limit or limit == 0:
-                        context_text = " ".join(vocab[i] for i in context)
-                        rows.append([context_text, vocab[target], vocab[prediction] if prediction is not None else "<unseen>", f"{probability:.6g}"])
-                    if neural_info:
-                        # Event position zero predicts first word; final position predicts EOS.
-                        target_index = min(event_pos, len(ids))
-                        prefix = [bos] + ids[:target_index]
-                        length = len(prefix)
-                        if length not in nn_batch:
-                            nn_batch[length] = ([], [], [])
-                        cx, ty, ix = nn_batch[length]
-                        cx.append(prefix)
-                        ty.append(target)
-                        ix.append(total)
-                        if len(cx) >= 256:
-                            flush(length)
-                    total += 1
-                    if total >= next_event_check:
-                        now = time.perf_counter()
-                        if progress_seconds and now - last_progress_at >= progress_seconds:
-                            print(
-                                f"  evaluation progress: {sentence_count:,} sentences, "
-                                f"{total:,} events ({now - started_at:.1f}s elapsed)",
-                                flush=True,
-                            )
-                            last_progress_at = now
-                        next_event_check = total + 10_000
-            else:
-                for target_index in range(len(ids) + 1):
-                    target = ids[target_index] if target_index < len(ids) else eos
-                    prefix = [bos] + ids[:target_index]
-                    length = len(prefix)
-                    if length not in nn_batch:
-                        nn_batch[length] = ([], [], [])
-                    cx, ty, ix = nn_batch[length]
-                    cx.append(prefix)
-                    ty.append(target)
-                    ix.append(total)
-                    if len(cx) >= 256:
-                        flush(length)
-                    if len(rows) < limit or limit == 0:
-                        context = " ".join(vocab[i] for i in ids[max(0, target_index - (order or 1)):target_index])
-                        rows.append([context, vocab[target], "", ""])
-                    total += 1
-                    if total >= next_event_check:
-                        now = time.perf_counter()
-                        if progress_seconds and now - last_progress_at >= progress_seconds:
-                            print(
-                                f"  evaluation progress: {sentence_count:,} sentences, "
-                                f"{total:,} events ({now - started_at:.1f}s elapsed)",
-                                flush=True,
-                            )
-                            last_progress_at = now
-                        next_event_check = total + 10_000
+        ng_result = nn_result = None
+        ng_nll = nn_nll = 0.0
+        ng_zero = ng_correct = ng_covered = nn_correct = 0
+        if ngram_info:
+            ng_result = evaluate_model(
+                ngram_info["lm"], metric_vocab, iter_sentences(path, lowercase), "ngram",
+                event_sink=lambda event: retain(event, "ngram"), case_limit=0,
+            )
+            ng_nll = ng_result["finite_nll_sum"]
+            ng_zero = ng_result["zero_probability_events"]
+            ng_correct = ng_result["correct"]
+            ng_covered = ng_result["context_covered"]
         if neural_info:
-            for length in list(nn_batch):
-                flush(length, final=True)
+            nn_result = evaluate_model(
+                neural_info["model"], metric_vocab, iter_sentences(path, lowercase), "neural", self.device,
+                allowed_target_ids=neural_info.get("allowed_target_ids"),
+                event_sink=lambda event: retain(event, "neural"), case_limit=0,
+            )
+            nn_nll = nn_result["finite_nll_sum"]
+            nn_correct = nn_result["correct"]
+        base_result = ng_result or nn_result
+        total = base_result["tokens"]
+        sentence_count = base_result["sentences"]
+        words_count = base_result["word_tokens"]
+        oov = base_result["oov_tokens"]
         print(f"Evaluation finished in {time.perf_counter() - started_at:.1f}s.", flush=True)
         print("\nEvaluation summary")
         print(f"  File: {self._display_path(path)}")
@@ -522,14 +470,22 @@ class LanguageModelCLI:
         )
         print("\nModel results")
         model_results = []
+
+        def perplexity_text(result):
+            if result["perplexity"] is not None:
+                return f"{result['perplexity']:.4g}"
+            if result["zero_probability_events"]:
+                return f"infinite ({result['zero_probability_events']:,} zero-probability events)"
+            return result["status"]
+
         if ngram_info:
-            ppl = math.inf if ng_zero else math.exp(ng_nll / total) if total else math.nan
             accuracy = ng_correct / total if total else math.nan
-            seen_accuracy = ng_correct / ng_covered if ng_covered else math.nan
+            seen_accuracy = math.nan
+            if ng_covered:
+                seen_accuracy = ng_result["correct_when_context_seen"] / ng_covered
             context_coverage = (
                 f"{ng_covered:,} / {total:,} ({ng_covered / total:.4%})" if total else "n/a"
             )
-            ppl_text = f"{ppl:.4g}" if math.isfinite(ppl) else f"∞ ({ng_zero:,} zero-probability events)"
             model_results.append((
                 f"{ngram_info['name']} ({order}-gram, {smoothing_desc})",
                 [
@@ -538,12 +494,12 @@ class LanguageModelCLI:
                     ("Top-1 when context seen", f"{seen_accuracy:.2%}" if ng_covered else "n/a"),
                     ("Contexts seen in training", context_coverage),
                     ("Zero-probability targets", f"{ng_zero:,} / {total:,} ({ng_zero / total:.2%})" if total else "n/a"),
-                    ("Perplexity", ppl_text),
+                    ("Perplexity", perplexity_text(ng_result)),
                 ] if total else [("Evaluation", "No events")],
             ))
         if neural_info:
-            ppl = math.exp(nn_nll / total) if total else math.nan
             accuracy = nn_correct / total if total else math.nan
+            nn_zero = nn_result["zero_probability_events"]
             model_results.append((
                 f"{neural_info['name']} ({neural_info['checkpoint'].name})",
                 [
@@ -551,8 +507,8 @@ class LanguageModelCLI:
                     ("Top-1 accuracy (all)", f"{accuracy:.2%}"),
                     ("Top-1 when context seen", "n/a (neural model)"),
                     ("Contexts seen in training", "n/a (neural model)"),
-                    ("Zero-probability targets", f"0 / {total:,} (0.00%)"),
-                    ("Perplexity", f"{ppl:.4g}"),
+                    ("Zero-probability targets", f"{nn_zero:,} / {total:,} ({nn_zero / total:.2%})"),
+                    ("Perplexity", perplexity_text(nn_result)),
                 ] if total else [("Evaluation", "No events")],
             ))
 
@@ -585,6 +541,7 @@ class LanguageModelCLI:
                 pred, prob = nn_rows.get(index, (-1, math.nan))
                 row += [vocab[pred] if pred >= 0 else "?", f"{prob:.6g}"]
             print(" | ".join(row))
+        return {"ngram": ng_result, "neural": nn_result}
 
     def resolve_neural(self, name: str):
         for key, info in self.neural.items():

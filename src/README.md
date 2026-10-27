@@ -7,7 +7,7 @@ Any dataset and any model can be plugged in; the first experiment compares a
 ## Project layout
 
 ```
-source_code/
+src/
 ├── run.py                 # command-line entry point
 ├── requirements.txt
 ├── configs/
@@ -26,16 +26,16 @@ source_code/
 
 ## Setup
 
-Python 3.12 is recommended.
+Python 3.12 is recommended. Run setup from the repository root:
 
 ```sh
 # with uv
 uv venv ~/.venvs/nlp-lm --python 3.12
-uv pip install --python ~/.venvs/nlp-lm/bin/python -r requirements.txt
+uv pip install --python ~/.venvs/nlp-lm/bin/python -r src/requirements.txt
 
 # or with plain pip
 python3.12 -m venv ~/.venvs/nlp-lm
-~/.venvs/nlp-lm/bin/pip install -r requirements.txt
+~/.venvs/nlp-lm/bin/python -m pip install -r src/requirements.txt
 ```
 
 Keep the virtual environment **outside OneDrive / cloud-synced folders**; on-demand file
@@ -107,6 +107,8 @@ the output config, data statistics, and run table.
 
 ### Inspecting a saved run
 
+Run the CLI examples in this section from the repository root, not from `src`.
+
 Start the interactive CLI without loading anything first:
 
 ```sh
@@ -146,6 +148,11 @@ checkpoint's saved vocabulary, lowercasing rule, and training percentage. Otherw
 a vocabulary from the supplied training text (`--min-freq 2` by default). N-gram models are
 kept in memory for the current CLI session; recreate them after restarting the CLI. A zero
 probability event gives an unsmoothed model infinite perplexity.
+
+Loading requires the checkpoint, `config.yaml`, and `vocab.json` in the same run directory.
+The historical Brown weights under `source_code/results/` and metadata under `src/results/`
+are not currently a directly loadable bundle. The checkpoint path above is an example of
+the required co-located layout, not a claim that those historical files have been moved.
 
 ### Using it from Python / a notebook
 
@@ -275,8 +282,103 @@ Environment used: Python 3.12, torch 2.14.1, nltk 3.10.3, pandas 3.0.6, pyyaml 6
 The Brown Corpus is distributed through NLTK data for non-commercial use; it is not public domain.
 See <https://www.nltk.org/nltk_data/>.
 
-## Not yet included
+## Document-Budget Sweep And Colab
 
-- Unsmoothed bigram/trigram and smoothed n-gram baselines.
-- Per-sentence probability scoring for the rare/unseen sequence analysis.
-- Ablation experiments.
+See the [Colab guide](../colab/README.md) for bundle/checksum pairing, Drive
+authorization, resume and complete downloads; the [model guide](lm/README.md)
+documents scoring and artifact trust boundaries. Configuration schemas and
+synthetic coverage are described in [configs/README.md](configs/README.md) and
+[tests/README.md](tests/README.md).
+
+The opt-in suite reuses `CountNGram`, `NgramLM`, the registered neural models and
+`Trainer`. Interactive comparison and the suite share a structured evaluator.
+Legacy positional-config commands remain available; their `--train-percent` still
+selects sentence prefixes, not document budgets.
+
+The [pilot config](configs/data_efficiency_nltk_pilot.yaml) selects only Gutenberg,
+WebText and Inaugural: ten cumulative document budgets (10% through 100%), three
+epochs, seed 42, bigram/trigram MLE, validation-selected trigram add-k, LSTM and
+context-2 FFNN. This is a short pilot, not a convergence claim. Later research runs
+need additional seeds and validation search, with a new output root.
+
+Run from the repository root:
+
+```sh
+~/.venvs/nlp-lm/bin/python src/run.py --suite src/configs/data_efficiency_nltk_pilot.yaml --stage all --dry-run
+~/.venvs/nlp-lm/bin/python -u src/run.py --suite src/configs/data_efficiency_nltk_pilot.yaml --stage prepare
+PYTHONPATH=src ~/.venvs/nlp-lm/bin/python -u -m lm.colab --suite src/configs/data_efficiency_nltk_pilot.yaml --output colab/nltk_pilot_bundle.zip
+```
+
+Upload [the notebook](../colab/nltk_data_efficiency.ipynb) to Google Colab, select
+a T4 GPU, then run its cells in order. Its upload cell accepts the checksum-pinned
+private bundle; authorize Drive directly in the browser. Results are written beneath
+`MyDrive/NLP_Experiments/nltk_data_efficiency_pilot_v2`, with a full ZIP export at the
+end. Rebuilding the bundle changes its ZIP checksum; update the notebook's
+`EXPECTED_BUNDLE_SHA256` to the generated sidecar value before uploading the rebuilt
+pair. Neither the notebook nor suite redownloads or rebuilds imported corpora.
+Prepared corpora, bundle ZIPs, checkpoints and root-level results are not in Git.
+A fresh clone needs the original private inputs before preparation, or a separately
+supplied verified bundle for Colab. The checked-in notebook pins the archived
+pilot bundle; rebuilding edited code requires its new hash and a new output name.
+
+For staged local execution, use `--stage train --resume`, then `seal`, `evaluate`,
+and `report`. `train` never evaluates test metrics. `seal` checks required fits,
+settings, partitions and vocabularies; `evaluate` rejects changes. `all` runs these
+stages in order. `--corpora inaugural` restricts execution. Code/config changes need
+a new output root. Completed fits resume only when environment fingerprints and
+artifact hashes match. Interrupted fits restart; previous attempt logs and latest
+epoch snapshots remain available.
+
+### Saved Artifacts
+
+```text
+results/<suite>/
+  protocol.json, environments/, events.jsonl, corpus_status.json, seal.json
+  prepared/<corpus>/manifest.json, sentences.sqlite
+  curated/webtext/repair.json, grouped.db, train.txt, test.txt
+  <corpus>/budget_<percent>/
+    vocab.json, vocab_counts.csv, data_stats.json, *_selection.json
+    tuning/<model>/<candidate>/...
+    final/<model>/seed<seed>/
+      config.yaml, vocab.json, data_stats.json, result.json, status.json
+      history.csv, training.png, report.md
+      validation_metrics.json, test_metrics.json, evaluation_status.json
+      <model>_seed<seed>.pt or counts.pkl
+      attempts/<timestamp>/run.log, history.csv, latest.pt
+  <corpus>/figures/*.png
+  runs.csv, metrics.csv, summary.csv, diagnostics.csv, examples.json, report.html
+```
+
+Reports include per-run epoch curves and per-corpus perplexity, accuracy,
+vocabulary/OOV, parameter/count size, runtime, process memory high-water and zero-event
+charts. Metrics include frequency/novelty strata and reproducible full-prefix cases.
+Tables and CSV exports use `bigram_mle`, `trigram_mle`, `trigram_addk`, `lstm`,
+`ffnn` within each budget. Training histories/fitting statistics are not separate
+final training-set evaluation metrics. Colab retains prepared indexes inside the
+preserved `input_bundle.zip`; its output `prepared/` directories contain manifests,
+not necessarily another copy of each sentence database.
+Infinite MLE scores are JSON `null` plus an explicit status and zero-event count,
+not clipped finite values or silently omitted seeds. Count checkpoints are Python
+pickles: load only trusted run bundles.
+
+Each budget's vocabulary uses only that budget's training documents, with the same
+frequency cutoff and shared IDs across all models. Prediction support excludes
+PAD/BOS and includes UNK/EOS. One nonempty prepared line is one sentence, contributing
+word targets plus EOS. Cross-budget perplexity reflects both data and vocabulary
+growth; inspect actual word counts, vocabulary and OOV too.
+
+WebText's approved derived repair keeps test bytes unchanged and removes all training
+variants of test source groups (`overheard.txt` and `singles.txt`). Remaining variants
+stay grouped by source; original within-group weighting is retained. After validation
+only two training groups remain. Rounded aliases are recorded as `alias_of_percent`,
+not ten distinct training populations. Gutenberg's book-sized units also make
+percentages approximate. Original imports and the download registry are unchanged.
+Historical rare-ngrams CSVs use a different tokenizer and are not relabelled as suite
+diagnostics.
+
+```sh
+PYTHONPATH=src ~/.venvs/nlp-lm/bin/python -B -m unittest discover -s src/tests -v
+```
+
+The seven-corpus rollout and research acceptance gates remain separate from this
+pilot. See the [implementation plan](../docs/research_directions/data_efficiency/plan.md).

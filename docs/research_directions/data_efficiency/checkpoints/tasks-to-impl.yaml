@@ -1,0 +1,138 @@
+metadata:
+  generated: '2026-10-26'
+  source_plan: docs/research_directions/data_efficiency/plan.md
+  scope: Three-corpus Colab pilot; broader original task criteria retained.
+  companion_report: docs/research_directions/data_efficiency/batch-report.yaml
+summary:
+  total_tasks: 30
+  completed_original_tasks: 2
+  partially_implemented_original_tasks: 27
+  deferred_original_tasks: 1
+  production_sign_off: false
+tasks:
+  - task: T001
+    status: partial
+    files: [src/configs/data_efficiency_nltk_pilot.yaml, src/lm/experiments.py]
+    remaining: Seven-corpus config and primary research corpus designation are outside the current pilot.
+  - task: T002
+    status: partial
+    files: [src/lm/preparation.py, src/lm/experiments.py]
+    remaining: Audit and resource certification of the four excluded corpora.
+  - task: T003
+    status: partial
+    files: [src/lm/preparation.py, src/tests/test_preparation.py]
+    remaining: Broader backend and malformed-record test matrix.
+  - task: T004
+    status: partial
+    files: [src/lm/preparation.py, src/tests/test_preparation.py]
+    remaining: MinHash candidate screening is probabilistic; excluded-corpus audits remain pending.
+  - task: T005
+    status: partial
+    files: [src/lm/preparation.py]
+    remaining: Fixed, checksummed partitions verified for the three selected corpora only.
+  - task: T006
+    status: partial
+    files: [src/lm/preparation.py, src/tests/test_preparation.py]
+    remaining: Nested document budgets and aliases implemented; metadata-stratified extensions not implemented.
+  - task: T007
+    status: partial
+    files: [src/lm/data.py, src/lm/experiments.py, src/tests/test_preparation.py]
+    remaining: Expand promotion, OOV monotonicity and held-out vocabulary regression cases.
+  - task: T008
+    status: partial
+    files: [src/lm/preparation.py, src/lm/data.py]
+    remaining: Indexed lazy access implemented without an encoded cache; large-corpus scaling remains unmeasured.
+  - task: T009
+    status: partial
+    files: [src/lm/statistical/ngram.py, src/lm/experiments.py]
+    remaining: Dedicated count-storage memory/throughput measurements and conditional optimization.
+  - task: T010
+    status: partial
+    files: [src/lm/data.py, src/lm/cli.py]
+    remaining: Legacy rare analyzer intentionally unchanged; suite computes its own whitespace-tokenized diagnostics.
+  - task: T011
+    status: partial
+    files: [src/lm/evaluation.py, src/lm/cli.py, src/tests/test_evaluation.py]
+    remaining: Extend matched-weight and numerical edge-case regression coverage.
+  - task: T012
+    status: partial
+    files: [src/lm/neural/trainer.py, src/lm/experiments.py]
+    remaining: Suite injects prepared inputs directly; broader legacy-controller regression coverage pending.
+  - task: T013
+    status: completed
+    files: [src/lm/experiments.py, src/lm/cli.py, src/lm/statistical/ngram.py]
+    evidence: Synthetic end-to-end suite fits existing MLE and add-k adapters beside both neural families.
+  - task: T014
+    status: completed
+    files: [src/run.py, src/lm/experiments.py]
+    evidence: Synthetic suite exercises staged fit, seal, evaluate, report and verified resume.
+  - task: T015
+    status: partial
+    files: [src/lm/experiments.py, src/lm/preparation.py]
+    remaining: Fingerprints implemented; add failure-injection tests for all atomic state transitions.
+  - task: T016
+    status: partial
+    files: [src/lm/experiments.py, src/tests/test_experiments.py]
+    remaining: Completed resume and corruption rejection tested; forced interruption restart test pending.
+  - task: T017
+    status: partial
+    files: [src/lm/experiments.py, src/configs/data_efficiency_nltk_pilot.yaml]
+    remaining: Pilot uses one final neural seed and one fixed learning rate, not the original three-seed research search.
+  - task: T018
+    status: partial
+    files: [src/lm/experiments.py, src/lm/neural/trainer.py]
+    remaining: Real-corpus resource measurements and explicit optimizer-update/token-throughput instrumentation.
+  - task: T019
+    status: partial
+    files: [src/lm/experiments.py, src/tests/test_experiments.py]
+    remaining: Three-corpus pilot sealing and local verification passed; broader research matrix and mutation coverage remain incomplete.
+  - task: T020
+    status: partial
+    files: [src/lm/evaluation.py, src/lm/reporting.py]
+    remaining: Explicit cross-budget known-word/OOV transition tables.
+  - task: T021
+    status: partial
+    files: [src/lm/evaluation.py, src/lm/reporting.py]
+    remaining: First ten events are retained; category-based rare/counterexample selection is not implemented.
+  - task: T022
+    status: partial
+    files: [src/lm/reporting.py, src/lm/experiments.py]
+    remaining: Extend measured throughput and tuning-cost presentation after real execution.
+  - task: T023
+    status: partial
+    files: [src/lm/reporting.py]
+    remaining: Frequency-loss curves, explicit cost-quality frontiers and category-based case tables.
+  - task: T024
+    status: partial
+    files: [src/tests/test_preparation.py]
+    remaining: Five focused tests pass; not every original acceptance edge case is covered.
+  - task: T025
+    status: partial
+    files: [src/tests/test_evaluation.py]
+    remaining: Ten scoring tests cover CLI overflow, conditional accuracy and support propagation; additional matched-weight parity and resource edge cases remain.
+  - task: T026
+    status: partial
+    files: [src/tests/test_experiments.py]
+    remaining: End-to-end seal/report/package/tamper case passes; explicit forced-interruption scenario remains.
+  - task: T027
+    status: partial
+    files: [src/tests/test_experiments.py, colab/nltk_data_efficiency.ipynb]
+    remaining: Three-corpus Colab pilot and complete local import verification passed; multi-seed research and broader acceptance remain outside this pilot.
+  - task: T028
+    status: partial
+    files: [README.md, colab/README.md, src/README.md, src/lm/README.md, src/configs/README.md, src/tests/README.md, src/data-pipeline/README.md, docs/research_directions/data_efficiency/README.md]
+    remaining: Research-rollout documentation depends on execution and remaining acceptance work.
+  - task: T029
+    status: partial
+    files: [src/requirements.txt, src/lm/experiments.py]
+    remaining: Dependencies/environment captured; per-corpus licence/access statements and AI/adapted-code declarations pending.
+  - task: T030
+    status: deferred
+    files: [docs/research_directions/data_efficiency/plan.md]
+    remaining: Full research matrix and seven-corpus sign-off are not the currently authorized pilot scope.
+validation:
+  command: PYTHONPATH=src ~/.venvs/nlp-lm/bin/python -B -m unittest discover -s src/tests -v
+  passed: 16
+  failed: 0
+  skipped: 0
+  scope: Synthetic scoring/preparation/suite regressions including CLI review fixes; real pilot verification is recorded separately, not production certification.

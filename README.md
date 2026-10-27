@@ -32,6 +32,150 @@ Keep the virtual environment outside cloud-synced folders. With plain `pip`,
 create the environment using `python3.12 -m venv ~/.venvs/nlp-lm`, then run
 `~/.venvs/nlp-lm/bin/python -m pip install -r src/requirements.txt`.
 
+## Inputs, Processing And Outputs
+
+Commit `f078584` adds the audited document-budget experiment suite and Colab
+workflow. Commit `d2483da` preserves legacy checkpoint loading after that
+integration. The existing positional-config runner and interactive CLI remain
+available; the workflow below is selected explicitly with `--suite`.
+
+### Required Inputs
+
+For local preparation and training, restore these inputs before running a real
+experiment. Paths below are relative to the repository root.
+
+| Input | Purpose |
+| --- | --- |
+| [Pilot configuration](src/configs/data_efficiency_nltk_pilot.yaml) | Selects corpora, source paths, budgets, seeds, vocabulary rules, models, training settings, resource limits and `output_root` |
+| `data/processed/<corpus>/train.txt` and `test.txt` | Original imported exports, one nonempty sentence per line; test membership must remain unchanged |
+| `data/processed/<corpus>/<corpus>.db` | Original SQLite document store, used to recover whole source documents and reconcile them with the exports |
+| Matching `<corpus>.db.sha` sidecar | Integrity metadata for the document store |
+| [Import manifest](data/processed/corpus_import_manifest.json) | Records imported file provenance and checksums |
+| Python environment from [requirements](src/requirements.txt) | Runs preparation, statistical/neural models, evaluation and reporting |
+
+The pilot selects `gutenberg`, `webtext` and `inaugural`. It does not need a
+pre-existing `valid.txt`: validation is derived from the imported training
+documents. Historical `rare-ngrams.csv` files are not suite inputs.
+
+For **Colab**, upload the private bundle produced by `lm.colab`, not the original
+corpus folders. The bundle contains code, configuration, prepared manifests and
+SQLite sentence indexes. The [notebook](colab/nltk_data_efficiency.ipynb) also
+needs its matching `EXPECTED_BUNDLE_SHA256`, a suitable runtime and Drive access
+for durable outputs. See the [bundle instructions](colab/README.md#build-a-matching-bundle).
+
+### What It Does
+
+1. Verifies source checksums, reconciles exported sentences to whole source
+	documents and checks split overlap/duplicates. It does not download corpora or
+	rebuild the original imported databases.
+2. Applies the configured WebText repair in a separate derived directory:
+	preserves test bytes and removes overlapping training source groups.
+3. Holds out validation from the existing training documents using data seed
+	`42`. Test remains the imported test population. It orders the remaining
+	training pool using budget seed `55` and selects cumulative document budgets
+	of 10%, 20%, ..., 100%, rounding document counts up.
+4. Builds a fresh vocabulary from each budget's training sentences only:
+	lowercase, whitespace tokenization, `min_freq=2`, no vocabulary cap. All
+	models at that corpus/budget share the same token IDs; held-out words do not
+	enter vocabulary construction.
+5. Fits bigram MLE, trigram MLE, validation-selected trigram add-k, LSTM and
+	context-2 FFNN independently at each budget. Neural fits use three epochs
+	and final seed `42`; validation selects settings/best weights.
+6. Seals the required training artifacts and their hashes before test scoring,
+	then evaluates test data and generates tables, plots and an offline report.
+
+The default pilot produces 150 final fits and 90 validation-only add-k tuning
+fits. Whole-document rounding can repeat budgets, especially for WebText; aliases
+are recorded rather than presented as different training populations.
+
+### Run Locally
+
+All commands run from the repository root. The dry run in [Start Here](#start-here)
+needs no corpus data and only displays the planned experiment matrix. After
+restoring the private inputs, run the stages separately to inspect progress:
+
+```sh
+~/.venvs/nlp-lm/bin/python -u src/run.py --suite src/configs/data_efficiency_nltk_pilot.yaml --stage prepare
+~/.venvs/nlp-lm/bin/python -u src/run.py --suite src/configs/data_efficiency_nltk_pilot.yaml --stage train --resume
+~/.venvs/nlp-lm/bin/python -u src/run.py --suite src/configs/data_efficiency_nltk_pilot.yaml --stage seal
+~/.venvs/nlp-lm/bin/python -u src/run.py --suite src/configs/data_efficiency_nltk_pilot.yaml --stage evaluate
+~/.venvs/nlp-lm/bin/python -u src/run.py --suite src/configs/data_efficiency_nltk_pilot.yaml --stage report
+```
+
+`--stage all` runs the full sequence. `--resume` verifies and reuses completed
+fits; an interrupted fit restarts rather than resuming optimizer state mid-epoch.
+For changed code, inputs or settings, copy the configuration and choose a new
+`name` and `output_root` before starting. Do not overwrite the completed pilot.
+
+### Where Outputs Go
+
+| Execution | Output location |
+| --- | --- |
+| Local preparation/training | Configured `output_root`; default `results/nltk_data_efficiency_pilot_v2/` |
+| Local bundle creation | `colab/nltk_pilot_bundle.zip` and its `.zip.sha256` sidecar |
+| Colab with Drive enabled | `MyDrive/NLP_Experiments/<OUTPUT_NAME>/`; default name `nltk_data_efficiency_pilot_v2` |
+| Downloaded completed pilot on this machine | `results/colab_imports/20261026T175208Z/nltk_data_efficiency_pilot_v2/` |
+
+Inside a suite output directory, start with these artifacts:
+
+| Relative path | Content |
+| --- | --- |
+| `report.html` | Offline experiment report; keep its relative assets beside it |
+| `runs.csv`, `metrics.csv`, `summary.csv`, `diagnostics.csv` | Per-run metrics, summaries and diagnostic results |
+| `protocol.json`, `seal.json`, `environments/`, `events.jsonl` | Experiment identity, artifact integrity, environment and execution audit |
+| `prepared/<corpus>/manifest.json` | Source hashes, exact validation/test document IDs and each budget's training document IDs |
+| `prepared/<corpus>/sentences.sqlite` | Prepared sentence content for local runs; Colab preserves the indexes in `input_bundle.zip` instead of necessarily copying them here |
+| `curated/webtext/` | Derived repair audit and repaired inputs; original corpus files are untouched |
+| `<corpus>/budget_010/vocab.json`, `vocab_counts.csv`, `data_stats.json` | Ordered vocabulary, training-token counts, selected document IDs and verification hashes for the 10% budget |
+| `<corpus>/budget_010/final/<model>/seed<seed>/` | Run config, validation/test metrics, fitted model, status, and neural epoch histories where applicable |
+| `<corpus>/budget_010/tuning/` | Validation-only candidate fits and their artifacts |
+
+Other budgets use `budget_020` through `budget_100`. Neural weights are `.pt`
+files; count-model state is `counts.pkl`. Load only trusted checkpoints/pickles.
+Histories record training progress, not separate final training-set rescoring.
+See the [complete artifact layout](src/README.md#saved-artifacts).
+
+### Recover Splits And Vocabulary
+
+A run's `config.yaml` contains `suite_run.prepared`, `suite_run.subset` and
+`suite_run.vocab` fingerprints. Match them to the corpus's prepared manifest and
+the budget's `data_stats.json`; hashes identify content, not a way to regenerate
+missing text. The prepared SQLite index maps document IDs to original
+`source_key` names and sentence content. Preserve it or the original imported
+corpora in private storage, together with the manifests/input bundle.
+
+To recreate just the vocabulary, the budget's ordered `vocab_counts.csv` is
+sufficient. Run this from the repository root after installing dependencies;
+change `budget` to the desired local or downloaded corpus/budget directory:
+
+```python
+import csv
+import json
+import sys
+from collections import Counter
+from pathlib import Path
+
+sys.path.insert(0, "src")
+from lm.data import Vocab
+
+budget = Path("results/nltk_data_efficiency_pilot_v2/gutenberg/budget_010")
+with (budget / "vocab_counts.csv").open(encoding="utf-8", newline="") as stream:
+	 counts = Counter({
+		  row["word"]: int(row["training_count"])
+		  for row in csv.DictReader(stream)
+	 })
+vocab = Vocab.from_counts(counts, min_freq=2)
+stats = json.loads((budget / "data_stats.json").read_text())
+assert vocab.fingerprint == stats["vocab_hash"]
+```
+
+Use the frequency cutoff from that experiment's configuration. Preserve CSV row
+order: equal-frequency tokens use first-occurrence order for their IDs. The
+first four IDs are `<pad>`, `<unk>`, `<s>` and `</s>`; `vocab.itos` is the ordered
+list and `vocab.stoi` is the reverse mapping. Reconstruction was verified against
+the saved token IDs and hashes for all 30 completed pilot budgets. This does not
+recover sentence order or the corpus itself from token counts.
+
 ## Colab Experiment
 
 The [notebook](colab/nltk_data_efficiency.ipynb) uses a locally generated private

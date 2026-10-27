@@ -1,0 +1,144 @@
+docs/research_directions/data_efficiency/checkpoints/tasks-to-impl.yaml
+  s_d970f0fa617328::t_6e1f6c66dff749 88,112,120,123,135,138
+  s_d970f0fa617328::t_a2730075f8f130 1-87,89-111,113-119,121-122,124-134,136-137
+docs/research_directions/data_efficiency/batch-report.yaml
+  s_d970f0fa617328::t_6e1f6c66dff749 89
+  s_d970f0fa617328::t_ca05e8241b0a3d 45-84
+  s_d970f0fa617328::t_de71db8f437b1b 1-44,85-88,90-92
+docs/research_directions/01_data_efficiency.md
+  s_d970f0fa617328::t_78b4074ebf64c6 50
+  s_d970f0fa617328::t_8732a72073783d 46,48,52,54,56,69,75,91,95,114-115,125,129
+src/lm/neural/trainer.py
+  s_d970f0fa617328::t_a89a0f9f80b0fb 17-18,46-47,54,59
+  s_d970f0fa617328::t_47268cf5b04e20 120,135-136
+src/requirements.txt
+  s_d970f0fa617328::t_efa3cfefe94a1e 7-8
+src/lm/reporting.py
+  s_d970f0fa617328::t_cb0d0406dd79af 158
+  s_d970f0fa617328::t_53796936c0a143 1-14,32-157,159-161,165-166,168-212
+  s_d970f0fa617328::t_58d429d8e1bee0 15-31,162-164,167
+src/lm/preparation.py
+  s_d970f0fa617328::t_0f5b2737da7417 15-82
+  s_d970f0fa617328::t_648a7bd33f5073 9,97,121,193-333
+  s_d970f0fa617328::t_41bb2d00b56966 1-8,10-14,83-96,98-120,122-192,334-382
+README.md
+  s_d970f0fa617328::t_b1b96ee60ededf 14-16
+  s_d970f0fa617328::t_0a65250252fd44 1-13,17-81
+src/lm/experiments.py
+  s_d970f0fa617328::t_cb0d0406dd79af 11,185-191
+  s_d970f0fa617328::t_648a7bd33f5073 29,161-162,242
+  s_d970f0fa617328::t_5aab3039377eae 441,446,459-461,464
+  s_d970f0fa617328::t_47268cf5b04e20 1-10,13-28,30-152,163-181,193-214,216-231,236-241,243-251,255-305,308-345,347-363,365-367,373-428,431-440,442-445,447-458,462-463,465-505,507-544
+  s_d970f0fa617328::t_0f5b2737da7417 12,153-160,182-184,192,215,232-235,252-254,306-307,346,364,368-372,429-430,506
+.gitignore
+  s_d970f0fa617328::t_6e1f6c66dff749 10
+  s_95b1a9a377d4a3::t_101e1ee1d5addf 16-31
+src/lm/statistical/ngram.py
+  s_d970f0fa617328::t_a89a0f9f80b0fb 65,68-79,81,109-110,216-217,261
+src/tests/test_experiments.py
+  s_d970f0fa617328::t_cf12cb93a305e9 46-48,56-57
+  s_d970f0fa617328::t_9a6ffd40f6a833 1,3-6,8-12,14-29,31-45,58-64,66-70,80,89-98
+  s_d970f0fa617328::t_58d429d8e1bee0 2,30,49-55,65
+  s_d970f0fa617328::t_d04a979481f301 81-88
+  s_d970f0fa617328::t_23c8bce4221e65 7,13,71-79
+src/tests/test_evaluation.py
+  s_d970f0fa617328::t_3f2cbc980141ad 2-3,10,27-40
+  s_d970f0fa617328::t_37ef8469b48cc6 13-14,88-106
+  s_d970f0fa617328::t_40161790a24429 1,4-9,11-12,15-26,107-145
+  s_d970f0fa617328::t_ed9f296d69346d 41-87
+src/lm/colab.py
+  s_d970f0fa617328::t_cb0d0406dd79af 1-74
+docs/research_directions/data_efficiency/checkpoints/spec-to-plan.yaml
+  s_d970f0fa617328::t_80f053030b1e10 68
+  s_d970f0fa617328::t_23f6b02e3069ea 1-67,69-70
+colab/nltk_data_efficiency.ipynb
+  s_d970f0fa617328::t_1fc9330e281e00 18-41
+  s_d970f0fa617328::t_fd0f3461c00145 42-100
+  s_d970f0fa617328::t_037d53c2693fd5 143-169
+  s_d970f0fa617328::t_a2497473f670bd 2-17,231-232,236
+  s_d970f0fa617328::t_ee830e4a9cda7c 170-200
+  s_d970f0fa617328::t_fa9848e80710be 101-142
+  s_d970f0fa617328::t_6e7c5d463de920 201-230
+  s_d970f0fa617328::t_89e0040984d0ef 1,233-235,237-240
+src/lm/data.py
+  s_d970f0fa617328::t_735e1e88af7ae9 172-179,182,185,196,233-234,246
+  s_d970f0fa617328::t_efa3cfefe94a1e 117-134
+  s_d970f0fa617328::t_a89a0f9f80b0fb 18-25
+  s_d970f0fa617328::t_0f5b2737da7417 156-160,162
+src/lm/cli.py
+  s_d970f0fa617328::t_a89a0f9f80b0fb 19,54,86,246,343-345
+  s_d970f0fa617328::t_ed9f296d69346d 298-300,308,466-473,476-478,490,495,503-504
+  s_d970f0fa617328::t_20f6da8f285449 193-194
+  s_d970f0fa617328::t_a42e688cc58b8f 20,338,395-437,439-450,537
+data/processed/corpus_import_manifest.json
+  s_d970f0fa617328::t_417ac7f4c8310b 1-2,4-295,313
+  s_d970f0fa617328::t_e054ef53f798e6 3,296-312
+src/README.md
+  s_d970f0fa617328::t_b1b96ee60ededf 29,34,38,274-279,306-309,342-346
+  s_d970f0fa617328::t_b5ae9bcacbffa3 272-273,280-305,310-341,347-368,370-371
+  s_d970f0fa617328::t_0de79239db9de3 10,97-98,139-143
+src/run.py
+  s_d970f0fa617328::t_20f6da8f285449 23-28,59-75
+src/tests/test_preparation.py
+  s_d970f0fa617328::t_04ffa80a9b1f2d 9,36-71
+  s_d970f0fa617328::t_2d68f8119f2d5d 1-8,10-35,72-117
+docs/research_directions/data_efficiency/plan.md
+  s_d970f0fa617328::t_0de79239db9de3 48-66,125,139,141,249-258,283,298,337,542-543
+  s_d970f0fa617328::t_8732a72073783d 15-23,34,107-108,112,114,116,118,120,130-134,151,161-162,173,175-187,239-248,264,291,299,316-329,352,359,431-495,504-525,545
+  s_d970f0fa617328::t_80f053030b1e10 27,37-38,69-91,202,224-231,307,348,361-410,503
+  s_d970f0fa617328::t_02fdb6ed7ff851 105-106,113,115,117,119,121,153,355
+  s_d970f0fa617328::t_b5ae9bcacbffa3 9-10,216,265-273
+  s_d970f0fa617328::t_0f8e8249470f86 110,168-172,174
+  s_d970f0fa617328::t_ca05e8241b0a3d 5-7
+  s_d970f0fa617328::t_8e4a36ca7980f2 1-4,8,11-14,24-26,28-33,35-36,39-47,67-68,92-104,109,111,122-124,126-129,135-138,140,142-150,152,154-160,163-167,188-201,203-215,217-223,232-238,259-263,274-282,284-290,292-297,300-306,308-315,330-336,338-347,349-351,353-354,356-358,360,411-430,496-502,526-541,544
+data/processed/readme.txt
+  s_d970f0fa617328::t_b1b96ee60ededf 39-44
+  s_d970f0fa617328::t_80f053030b1e10 1-37
+  s_d970f0fa617328::t_9f237e368c99bb 38
+src/lm/evaluation.py
+  s_d970f0fa617328::t_0f5b2737da7417 183
+  s_d970f0fa617328::t_7c6cc7920cefa4 1-182,184-205
+src/data-pipeline/README.md
+  s_d970f0fa617328::t_b1b96ee60ededf 51-56
+  s_d970f0fa617328::t_b5ae9bcacbffa3 35-50
+src/tests/README.md
+  s_d970f0fa617328::t_a1e0ddcd9736ce 42-47
+  s_d970f0fa617328::t_42a917401108c0 1-41
+src/configs/data_efficiency_nltk_pilot.yaml
+  s_d970f0fa617328::t_648a7bd33f5073 2-33
+  s_d970f0fa617328::t_75fc47f1c75639 1,34-93
+colab/README.md
+  s_d970f0fa617328::t_ae94bd1038e1c5 1-133
+docs/research_directions/data_efficiency/README.md
+  s_d970f0fa617328::t_9746f7e31f230b 1-46
+docs/research_directions/data_efficiency/checkpoints/plan-to-tasks.yaml
+  s_d970f0fa617328::t_dab3af273709ca 1-86
+src/configs/README.md
+  s_d970f0fa617328::t_848b6c469d2b54 1-53
+src/lm/README.md
+  s_d970f0fa617328::t_3f03a70853ebe3 1-101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "55d8e003fcbff2214504187242b3a92a95ac0544",
+  "prompts": {},
+  "sessions": {
+    "s_95b1a9a377d4a3": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "543bfd12-86da-46c2-8028-86f7e77c62c1",
+        "model": "copilot/gpt-6.1-sol"
+      },
+      "human_author": "AxleAddict <akshayjoish28@gmail.com>"
+    },
+    "s_d970f0fa617328": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "a6970ae6-5fd0-4ee3-b822-b8f47a92c33b",
+        "model": "copilot/gpt-6.1-sol"
+      },
+      "human_author": "AxleAddict <akshayjoish28@gmail.com>"
+    }
+  }
+}

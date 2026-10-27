@@ -1,0 +1,36 @@
+docs/research_directions/data_efficiency/batch-report.yaml
+  s_d970f0fa617328::t_ba30060536c992 89
+src/tests/README.md
+  s_d970f0fa617328::t_ba30060536c992 24
+src/lm/cli.py
+  s_d970f0fa617328::t_de89a49365d9e2 6
+src/tests/test_evaluation.py
+  s_d970f0fa617328::t_de89a49365d9e2 4,10,13,91-113
+  s_7583a9316bb3e5::t_b38ac0ad07e7e4 114
+docs/research_directions/data_efficiency/checkpoints/tasks-to-impl.yaml
+  s_d970f0fa617328::t_ba30060536c992 84,100,112,124,135
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d2483dad3ef169a62314a9953b56f0c167a56d8b",
+  "prompts": {},
+  "sessions": {
+    "s_7583a9316bb3e5": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "c97e3dcf-ce77-40ef-847d-a11d44eef2e3",
+        "model": "copilot/gpt-6.1-sol"
+      },
+      "human_author": "AxleAddict <akshayjoish28@gmail.com>"
+    },
+    "s_d970f0fa617328": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "a6970ae6-5fd0-4ee3-b822-b8f47a92c33b",
+        "model": "copilot/gpt-6.1-sol"
+      },
+      "human_author": "AxleAddict <akshayjoish28@gmail.com>"
+    }
+  }
+}

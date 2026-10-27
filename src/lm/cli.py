@@ -3,6 +3,7 @@
 import argparse
 import json
 import math
+import re
 import shlex
 import sys
 import time

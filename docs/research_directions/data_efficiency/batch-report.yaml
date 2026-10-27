@@ -86,7 +86,7 @@ test_results:
   focused_regressions:
     command: PYTHONPATH=src ~/.venvs/nlp-lm/bin/python -B -m unittest discover -s src/tests -v
     python: 3.12.14
-    passed: 16
+    passed: 17
     failed: 0
     skipped: 0
     failures: []

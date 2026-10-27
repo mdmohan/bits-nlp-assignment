@@ -21,7 +21,7 @@ PYTHONPATH=src:src/tests ~/.venvs/nlp-lm/bin/python -B -m unittest test_experime
 
 | Test module | Main checks |
 | --- | --- |
-| `test_evaluation.py` | Sentence/EOS accounting, aligned count/neural target support, padding, OOV, lazy encoding, honest MLE zeros, CLI structured metrics, conditional accuracy and overflow rendering |
+| `test_evaluation.py` | Sentence/EOS accounting, aligned count/neural target support, padding, OOV, lazy encoding, honest MLE zeros, CLI structured metrics, conditional accuracy, overflow rendering and legacy/context-sweep FFNN checkpoint loading |
 | `test_preparation.py` | Nested training-only document budgets/vocabularies, preserved test bytes, source corruption, missing membership, cross-split overlap and approved variant repair |
 | `test_experiments.py` | Tiny train/seal/evaluate/report sweep, all five models, report/CSV ordering, checkpoint-preserving resume, portable bundle contents and tamper rejection |
 

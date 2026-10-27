@@ -81,7 +81,7 @@ tasks:
   - task: T018
     status: partial
     files: [src/lm/experiments.py, src/lm/neural/trainer.py]
-    remaining: Real-corpus resource measurements and explicit optimizer-update/token-throughput instrumentation.
+    remaining: Pilot resource records are captured; explicit optimizer-update/token-throughput instrumentation and broader scaling measurements remain.
   - task: T019
     status: partial
     files: [src/lm/experiments.py, src/tests/test_experiments.py]
@@ -97,7 +97,7 @@ tasks:
   - task: T022
     status: partial
     files: [src/lm/reporting.py, src/lm/experiments.py]
-    remaining: Extend measured throughput and tuning-cost presentation after real execution.
+    remaining: Extend measured throughput and tuning-cost presentation beyond the completed pilot execution.
   - task: T023
     status: partial
     files: [src/lm/reporting.py]
@@ -109,7 +109,7 @@ tasks:
   - task: T025
     status: partial
     files: [src/tests/test_evaluation.py]
-    remaining: Ten scoring tests cover CLI overflow, conditional accuracy and support propagation; additional matched-weight parity and resource edge cases remain.
+    remaining: Eleven scoring tests cover CLI overflow, conditional accuracy, support propagation and checkpoint loading; additional matched-weight parity and resource edge cases remain.
   - task: T026
     status: partial
     files: [src/tests/test_experiments.py]
@@ -121,7 +121,7 @@ tasks:
   - task: T028
     status: partial
     files: [README.md, colab/README.md, src/README.md, src/lm/README.md, src/configs/README.md, src/tests/README.md, src/data-pipeline/README.md, docs/research_directions/data_efficiency/README.md]
-    remaining: Research-rollout documentation depends on execution and remaining acceptance work.
+    remaining: Pilot setup, Colab/recovery, module, config and test guides are documented; broader research rollout still depends on remaining acceptance work.
   - task: T029
     status: partial
     files: [src/requirements.txt, src/lm/experiments.py]
@@ -132,7 +132,7 @@ tasks:
     remaining: Full research matrix and seven-corpus sign-off are not the currently authorized pilot scope.
 validation:
   command: PYTHONPATH=src ~/.venvs/nlp-lm/bin/python -B -m unittest discover -s src/tests -v
-  passed: 16
+  passed: 17
   failed: 0
   skipped: 0
   scope: Synthetic scoring/preparation/suite regressions including CLI review fixes; real pilot verification is recorded separately, not production certification.

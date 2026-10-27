@@ -1,13 +1,16 @@
 import math
 import contextlib
 import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
 import torch
+import yaml
 
 from lm.cli import CountNGram, LanguageModelCLI
+from lm.neural import build_model
 from lm.neural.trainer import TrainConfig, Trainer
 from lm.statistical.ngram import NgramLM
 from lm.evaluation import evaluate_model
@@ -84,6 +87,30 @@ class ScoringContractTests(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 cli.load_ngram("matched", 2, path, smoothing="laplace", k=1)
             self.assertEqual(cli.ngrams["matched"]["lm"].model.target_ids, tuple(vocab.allowed_target_ids))
+
+    def test_cli_loads_legacy_and_context_sweep_neural_checkpoints(self):
+        vocab = Vocab.from_list(["<pad>", "<unk>", "<s>", "</s>", "hello"])
+        params = dict(context_size=2, embed_dim=2, hidden_dim=4, dropout=0)
+        config = dict(models=[dict(name="ffnn", params=params)],
+                      allowed_target_ids=vocab.allowed_target_ids)
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            (run / "config.yaml").write_text(yaml.safe_dump(config))
+            (run / "vocab.json").write_text(json.dumps(vocab.itos))
+            cli = LanguageModelCLI("cpu")
+            for name, context_size in (("ffnn_seed42.pt", 2), ("ffnn_ctx4_seed42.pt", 4)):
+                with self.subTest(checkpoint=name):
+                    model_params = dict(params, context_size=context_size)
+                    model = build_model("ffnn", len(vocab), vocab.pad_id, **model_params)
+                    checkpoint = run / name
+                    torch.save(model.state_dict(), checkpoint)
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        key = cli.load_neural(checkpoint)
+                    loaded = cli.neural[key]
+                    self.assertEqual(loaded["model"].context_size, context_size)
+                    self.assertEqual(loaded["allowed_target_ids"], vocab.allowed_target_ids)
+                    for parameter, value in model.state_dict().items():
+                        torch.testing.assert_close(loaded["model"].state_dict()[parameter], value)
 
     def test_whole_sentence_evaluator_counts_eos_and_unpads(self):
         vocab = Vocab.from_list(["<pad>", "<unk>", "<s>", "</s>", "hello", "world"])

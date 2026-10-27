@@ -18,12 +18,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import re
+import time
 from collections import Counter
 from pathlib import Path
 
 from clean_data import TextCleaner
 from training_content_cleaner import TrainingContentCleaner
-from log_utils import display_path
+from log_utils import display_path, log_event
 
 
 def _read_text(path: Path, encoding: str) -> tuple[str, str]:
@@ -194,6 +195,7 @@ def _validate_args(args: argparse.Namespace) -> tuple[Path, Path, Path]:
 
 
 def run(args: argparse.Namespace) -> int:
+    started_at = time.perf_counter()
     input_dir, output_dir, audit_dir = _validate_args(args)
     word_patterns = [
         re.compile(rf"\b{re.escape(word)}\b", flags=re.IGNORECASE)
@@ -210,24 +212,37 @@ def run(args: argparse.Namespace) -> int:
         description = ".txt or extensionless files" if args.include_extensionless else ".txt files"
         raise ValueError(f"No {description} found under {input_dir}")
 
+    log_event(
+        "info",
+        f"Cleaning {len(source_files):,} source files; strategy={args.dedup_strategy}, "
+        f"content-cleaning={'yes' if args.content_cleaning else 'no'}, "
+        f"remove-words={len(args.remove_word)}, remove-regex={len(args.remove_regex)}",
+    )
+
     documents: dict[str, dict] = {}
     encodings: dict[str, str] = {}
     read_errors: list[dict[str, str]] = []
-    for source in source_files:
+    last_progress_at = time.monotonic()
+    for index, source in enumerate(source_files, start=1):
         try:
             text, actual_encoding = _read_text(source, args.encoding)
         except (OSError, UnicodeError, ValueError) as exc:
             read_errors.append({"source_file": str(source), "error": str(exc)})
-            continue
-        for pattern in (*word_patterns, *regex_patterns):
-            text = pattern.sub(" ", text)
-        key = str(source)
-        documents[key] = {
-            "extracted_text": text,
-            "output_filename": str(source),
-            "status": "loaded_text_input",
-        }
-        encodings[key] = actual_encoding
+        else:
+            for pattern in (*word_patterns, *regex_patterns):
+                text = pattern.sub(" ", text)
+            key = str(source)
+            documents[key] = {
+                "extracted_text": text,
+                "output_filename": str(source),
+                "status": "loaded_text_input",
+            }
+            encodings[key] = actual_encoding
+
+        now = time.monotonic()
+        if now - last_progress_at >= 10 or index == len(source_files):
+            log_event("progress", f"Read {index:,}/{len(source_files):,} source files")
+            last_progress_at = now
 
     if not documents:
         detail = read_errors[0]["error"] if read_errors else "No readable files."
@@ -250,12 +265,21 @@ def run(args: argparse.Namespace) -> int:
         similarity_threshold=args.similarity_threshold,
         num_perm=args.minhash_permutations,
     )
+    quality_started_at = time.perf_counter()
+    log_event("info", "Quality and duplicate filtering started")
     quality_kept, quality_rejected = cleaner.filter_corpus(
         documents,
         audit_report_path=document_audit,
     )
+    log_event(
+        "ok",
+        f"Quality filtering finished in {time.perf_counter() - quality_started_at:.1f}s; "
+        f"kept={len(quality_kept):,}, rejected={len(quality_rejected):,}",
+    )
 
     if args.content_cleaning:
+        content_started_at = time.perf_counter()
+        log_event("info", "Content cleanup started")
         content_cleaner = TrainingContentCleaner(
             min_content_chars=args.min_content_chars,
             min_alphabetic_ratio=args.min_alphabetic_ratio,
@@ -267,6 +291,11 @@ def run(args: argparse.Namespace) -> int:
             audit_report_path=content_audit,
             cleaned_text_dir=output_dir,
             upstream_rejected=quality_rejected,
+        )
+        log_event(
+            "ok",
+            f"Content cleanup finished in {time.perf_counter() - content_started_at:.1f}s; "
+            f"kept={len(final_documents):,}, rejected={len(content_rejected):,}",
         )
     else:
         final_documents = quality_kept
@@ -313,6 +342,7 @@ def run(args: argparse.Namespace) -> int:
             "Review the content audit samples, especially removed ASCII diagrams "
             "and RFC boilerplate, before using the corpus."
         )
+    log_event("ok", f"Cleaning finished in {time.perf_counter() - started_at:.1f}s")
     return 0
 
 
@@ -322,6 +352,7 @@ def main() -> int:
     try:
         return run(args)
     except (ImportError, OSError, RuntimeError, ValueError, re.error) as exc:
+        log_event("error", str(exc))
         parser.exit(1, f"error: {exc}\n")
 
 

@@ -79,8 +79,10 @@ python -u run.py configs/brown.yaml --algorithm ffnn --context-size 4 --seed 13
 ```
 
 Context size `1` gives a bigram-style neural context; `2` gives a trigram-style context.
-Each override writes to its own `results/<name>_ffnn_ctx<N>/` folder, and the context size is
-recorded in `runs.csv`, `summary.csv`, and the saved config. The option applies to FFNN only.
+Each override writes to its own `results/<name>_ffnn_ctx<N>/` experiment folder. Within the
+experiment, every configured model variant has its own `models/<variant>/` folder, and its
+context size is recorded in `runs.csv`, `summary.csv`, and the saved config. The option applies
+to FFNN only.
 
 To run several FFNN context sizes in one experiment, add a top-level list beside `seeds` in
 the YAML config:
@@ -91,9 +93,9 @@ context_sizes: [1, 2, 4]
 ```
 
 Each configured FFNN is trained once per context size and seed; other configured models run
-once per seed. Checkpoints and histories include the context size in their filenames, and the
-run table reports it as a separate result column. `--context-size N` still overrides the list
-for a one-context run.
+once per seed. Each variant gets a separate folder under `results/<name>/models/`, preventing
+duplicate algorithm entries from overwriting checkpoints or histories. The run table reports
+the variant and context size. `--context-size N` still overrides the list for a one-context run.
 
 For a quicker run, pass `--train-percent` to use only the first portion of the training split;
 validation and test data remain complete:
@@ -128,14 +130,16 @@ Laplace requires an explicit `--k` value. Backoff accepts `--discount` (default 
 backs off recursively: trigram to bigram to unigram. The trigram build collects those lower-order
 counts from the same training file, so no separate bigram model build is needed.
 
-The evaluation table shows each context, expected next word, n-gram prediction, and the
-probability assigned to the expected word. The default table shows the first 100 events;
-`--limit 0` prints every event. Perplexity and top-1 accuracy summarize the full file.
+Evaluation reports perplexity and top-1 accuracy over the full file, then prints up to 25
+correct and 25 incorrect n-gram predictions separately. Examples are ranked by the model's
+probability for its top prediction, so incorrect examples show the most confident mistakes.
+Each row includes `P(expected)` and `P(prediction)`. Set `--limit N` to show up to N examples
+per section; `--limit 0` prints every event.
 
 To compare against a neural checkpoint, load it and compare both models on the same test file:
 
 ```text
-lm> nn load src/results/brown_press_neural/ffnn_seed13.pt
+lm> nn load src/results/brown_press_neural/models/ffnn_ctx3/ffnn_seed13.pt
 lm> vocab 10
 lm> predict the cat
 lm> ngram brown_bigram --n 2 --train data/processed/brown/train.txt
@@ -243,14 +247,16 @@ The trainer and controller need no changes.
 
 ## Outputs
 
-`results/<name>/` contains:
+`results/<name>/` contains aggregate run files and a `models/` folder with one subfolder per
+configured model variant. Each model folder contains its checkpoint(s), training history,
+config, vocabulary, and data statistics.
 
 | File | Content |
 |---|---|
-| `runs.csv` | One row per model x seed: parameters, vocab size, test OOV rate, valid/test perplexity, epochs, train and test time |
-| `summary.csv` | Mean and standard deviation per model across seeds |
-| `<model>_seed<seed>_history.csv` | Per-epoch train/valid perplexity and time |
-| `<model>_seed<seed>.pt` | Best model weights (not committed to git; regenerate with `run.py`) |
+| `runs.csv` | One row per model variant x seed: parameters, vocab size, test OOV rate, valid/test perplexity, epochs, train and test time |
+| `summary.csv` | Mean and standard deviation per model variant across seeds |
+| `models/<variant>/<model>_seed<seed>_history.csv` | Per-epoch train/valid perplexity and time |
+| `models/<variant>/<model>_seed<seed>.pt` | Best model weights (not committed to git; regenerate with `run.py`) |
 | `vocab.json` | Vocabulary list (index = word id) |
 | `data_stats.json` | Sentence/token counts per split, vocab size, OOV rates |
 | `config.yaml` | Copy of the config used |

@@ -56,6 +56,8 @@ corpora:
     download:
       type: nltk
       package: webtext
+    ignore-files:
+      - firefox.txt
 
   inaugural:
     title: US Presidential Inaugural Addresses (NLTK collection)
@@ -95,21 +97,65 @@ corpora:
       - README
       - stopwords
 
-  ptb:
-    title: Penn Treebank (NLTK package)
+  blog-posts:
+    title: Blog posts (local archive)
     status: candidate
     language: English
-    domain: Edited news text
+    domain: Informal blog text
     source:
-      provider: NLTK Data
-      url: https://www.nltk.org/nltk_data/
-      package: ptb
-    version: NLTK data package; record the download date and NLTK version used.
-    license: Check the upstream corpus and NLTK package terms before redistribution.
-    limitations: Treebank text is preprocessed and may contain tokenization conventions.
+      provider: Local archive
+    version: Record the archive source/revision and access date.
+    license: Verify the original blog sources and redistribution terms before sharing.
+    limitations: Blog topics, writing styles, and document lengths may vary substantially.
+    preprocessing: "Convert the extracted XML corpus to text with src/data-pipeline/process_blog_xml.py, which uses extract_blog_posts.py and clean_blog_artifacts.py. It writes one text file per source XML with one post per line before the standard pipeline cleaning and loading stages."
     download:
-      type: nltk
-      package: ptb
+      type: local
+      package: data/raw/blog-posts.zip
+    extract-path: data/raw/extracted/blog-posts
+    remove-words:
+      - urlLink
+      - nbsp
+    remove-regex:
+      - 'https?://\S+'
+      - '\b[A-Za-z][A-Za-z0-9_]{2,30}:\s*[-–—]{2,}'
+      - '!{2,}'
+      - '\?{2,}'
+      - '\b[A-Za-z]{20,}\b'
+      - '(?i)\(?\b\d{1,2}:\d{2}:\d{2}\s*[AP]M\b\)?'
+      - '\bwww\.[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:/[^\s]*)?'
+
+  roc-stories:
+    title: ROC Stories (local archive)
+    status: candidate
+    language: English
+    domain: Short commonsense narrative stories
+    source:
+      provider: Local archive
+    version: Record the archive source/revision and access date.
+    license: Verify the upstream dataset license and redistribution terms before sharing.
+    limitations: Short, curated stories may not represent general-purpose text.
+    download:
+      type: local
+      package: data/raw/roc-stories.zip
+    extract-path: data/raw/extracted/roc-stories
+
+# For a corpus archive copied into the repository, use a local source. Paths in
+# `download.package` and `extract-path` are relative to the project root (or may
+# be absolute). Keep extraction outside `data.output` so raw files cannot be
+# mistaken for processed corpus files on later runs.
+#   ptb-local:
+#     title: Penn Treebank archive (local copy)
+#     status: candidate
+#     language: English
+#     domain: Edited news text
+#     source: {provider: Local archive, url: https://www.nltk.org/nltk_data/}
+#     version: Record archive source and access date.
+#     license: Check upstream corpus and package terms before redistribution.
+#     limitations: Treebank text is preprocessed and may contain tokenization conventions.
+#     download:
+#       type: local
+#       package: data/raw/ptb.tar.gz
+#     extract-path: data/raw/extracted/ptb
 
 # URL-based corpus example (copy and fill in when choosing a direct downloadable file):
 #   my-url-corpus:
@@ -142,6 +188,8 @@ corpora:
 #   split: {unit: document, test_ratio: 0.2, seed: 55}
 #   leakage_checks: Describe exact/near-duplicate checks across train and test.
 #   evaluation: Record which models/metrics were used to compare this corpus.
-# `extract-path`, `ignore-files`, and `include-extensionless` are operational:
-# they locate extracted content, exclude package metadata, and admit extensionless
-# documents into cleaning/loading when the corpus stores articles without suffixes.
+# `extract-path`, `ignore-files`, `include-extensionless`, `remove-words`, and
+# `remove-regex` are operational. The last two are used only when cleaning is
+# enabled, and each is an array. Example:
+#   remove-words: [urlLink, nbsp]
+#   remove-regex: ['https?://\\S+', '\\bfoo\\d+']

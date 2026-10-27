@@ -1,9 +1,10 @@
 import argparse
 import re
 import shelve
+import time
 from pathlib import Path
 from corpus_parser import create_parser
-from log_utils import display_path
+from log_utils import display_path, log_event
 
 
 def collect_files(
@@ -49,6 +50,7 @@ def collect_files(
 
 
 def main():
+    started_at = time.perf_counter()
     parser_cli = argparse.ArgumentParser(
         description="Parse corpus files, store structured output in DB, and dump sentences."
     )
@@ -101,10 +103,14 @@ def main():
     
     # 2. Collect input files
     target_files = collect_files(args.corpus_path, args.ext, args.corpus_type, args.ignore_file)
-    print(f"Found {len(target_files)} file(s) to process.")
+    log_event("info", f"Loading {len(target_files):,} source documents with parser '{args.corpus_type}'")
+    if args.ignore_file:
+        log_event("info", f"Ignore-list: {', '.join(args.ignore_file)}")
 
     total_paragraphs = 0
     total_sentences = 0
+    failed_files = 0
+    last_progress_at = time.monotonic()
 
     # 3. Process files, write to persistent DB and stream sentences
     # Using shelve for pythonic dict interface: db[file_path_str] = result
@@ -140,14 +146,31 @@ def main():
                     print(f"[{idx}/{len(target_files)}] {file_path.name}: {file_sentence_count:,} sentences")
 
             except Exception as e:
-                print(f"[{idx}/{len(target_files)}] Error processing {file_path.name}: {e}")
+                failed_files += 1
+                log_event("error", f"Document {idx}/{len(target_files)} ({file_path.name}) failed: {e}")
 
-    print("\n--- Pipeline Complete ---")
-    print(f"Database saved to : {display_path(args.db_path)}")
+            now = time.monotonic()
+            if not args.verbose and (
+                idx == len(target_files) or now - last_progress_at >= 10
+            ):
+                log_event(
+                    "progress",
+                    f"Loaded {idx:,}/{len(target_files):,} documents; "
+                    f"sentences={total_sentences:,}, failures={failed_files:,}",
+                )
+                last_progress_at = now
+
+    print("\n--- Load Summary ---")
+    print(f"Database: {display_path(args.db_path)}")
     if args.dump_path:
-        print(f"Sentences dumped to: {display_path(args.dump_path)}")
-    print(f"Total Paragraphs  : {total_paragraphs}")
-    print(f"Total Sentences   : {total_sentences}")
+        print(f"Sentence dump: {display_path(args.dump_path)}")
+    print(f"Documents attempted: {len(target_files):,}")
+    print(f"Documents failed:    {failed_files:,}")
+    print(f"Total paragraphs:    {total_paragraphs:,}")
+    print(f"Total sentences:     {total_sentences:,}")
+    level = "warn" if failed_files else "ok"
+    status = "finished with file errors" if failed_files else "finished"
+    log_event(level, f"Database load {status} in {time.perf_counter() - started_at:.1f}s")
 
 
 if __name__ == "__main__":

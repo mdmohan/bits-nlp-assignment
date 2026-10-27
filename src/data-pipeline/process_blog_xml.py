@@ -40,11 +40,25 @@ def main() -> int:
     if output_dir == input_dir or input_dir in output_dir.parents:
         parser.error("output directory must be outside the input directory")
 
-    source_files = sorted(
+    all_xml_files = sorted(
         path for path in input_dir.rglob("*.xml") if path.is_file()
     )
+    source_files = [path for path in all_xml_files if not path.name.startswith("._")]
+    skipped_appledouble = len(all_xml_files) - len(source_files)
+
+    # Remove empty text outputs left by older runs that treated macOS
+    # AppleDouble metadata files (._*.xml) as blog XML documents.
+    stale_outputs = (
+        [path for path in output_dir.rglob("._*.txt") if path.is_file()]
+        if output_dir.is_dir()
+        else []
+    )
+    for stale_output in stale_outputs:
+        stale_output.unlink()
+
     if not source_files:
-        parser.error(f"no .xml files found under {input_dir}")
+        suffix = f" (ignored {skipped_appledouble} AppleDouble sidecars)" if skipped_appledouble else ""
+        parser.error(f"no usable .xml files found under {input_dir}{suffix}")
 
     totals = {
         "posts_extracted": 0,
@@ -82,6 +96,8 @@ def main() -> int:
             failures.append((source, str(exc)))
 
     print(f"Processed {len(source_files) - len(failures)} of {len(source_files)} XML files.")
+    print(f"Ignored AppleDouble XML sidecars: {skipped_appledouble}")
+    print(f"Removed stale AppleDouble text outputs: {len(stale_outputs)}")
     print(f"Final text files: {output_dir}")
     print(f"Empty outputs: {empty_files}")
     print("Post and cleanup counts:")

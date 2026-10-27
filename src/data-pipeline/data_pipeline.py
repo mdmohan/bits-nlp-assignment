@@ -5,13 +5,23 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+import time
 import zipfile
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from data_download import configured_extract_path, load_corpus_config, safe_extract_zip
+from data_download import (
+    configured_extract_path,
+    configured_string_list,
+    extracted_source_folder,
+    load_corpus_config,
+    local_archive_path,
+    local_extract_path,
+    safe_extract_archive,
+    safe_extract_zip,
+)
 from database_integrity import database_files, verify_database_sha, write_database_sha
-from log_utils import display_path
+from log_utils import display_path, log_event
 
 
 SRC_DIR = Path(__file__).resolve().parent
@@ -114,11 +124,14 @@ def run_stage(command: list[str]) -> None:
         "analyze_rare_ngrams.py": "rare-check",
         "data_download.py": "download",
     }.get(script_name, script_name)
-    print(f"\n== {stage} ==", flush=True)
+    started_at = time.perf_counter()
+    print(f"\n== {stage}: started ==", flush=True)
     try:
         subprocess.run(command, cwd=PROJECT_DIR, check=True)
     except subprocess.CalledProcessError as exc:
+        log_event("error", f"{stage} stage failed after {time.perf_counter() - started_at:.1f}s (exit {exc.returncode})")
         raise RuntimeError(f"{stage} stage failed (exit code {exc.returncode})") from exc
+    log_event("ok", f"{stage} stage finished in {time.perf_counter() - started_at:.1f}s")
 
 
 def database_from_input(input_path: Path | None, corpus: str) -> Path:
@@ -191,10 +204,26 @@ def downloaded_source_folder(corpus: str, config_path: Path, download_root: Path
             return extracted_dir
         return corpus_dir
 
+    if spec.get("type") == "local":
+        package = spec.get("package")
+        extract_value = entry.get("extract-path")
+        if not isinstance(package, str) or not package.strip():
+            raise ValueError(f"Corpus '{corpus}' has local download type but no archive package path")
+        if not isinstance(extract_value, str) or not extract_value.strip():
+            raise ValueError(f"Corpus '{corpus}' has local download type but no extract-path")
+        archive_path = local_archive_path(package, PROJECT_DIR, download_root)
+        if not archive_path.is_file():
+            raise FileNotFoundError(f"Local corpus archive was not found: {archive_path}")
+        extract_dir = local_extract_path(extract_value, PROJECT_DIR)
+        if not extract_dir.is_dir() or not any(extract_dir.iterdir()):
+            safe_extract_archive(archive_path, extract_dir)
+        return extracted_source_folder(extract_dir)
+
     raise ValueError(f"Corpus '{corpus}' has unsupported download type {spec.get('type')!r}")
 
 
 def run(args: argparse.Namespace) -> int:
+    pipeline_started_at = time.perf_counter()
     split_requested = args.split is not None or args.split_ratios is not None
     processing_selected = any((args.clean, args.load, split_requested, args.rare_check))
     if not args.download and not processing_selected:
@@ -209,10 +238,19 @@ def run(args: argparse.Namespace) -> int:
     corpus = args.corpus.strip()
     if not corpus or Path(corpus).name != corpus or corpus in {".", ".."}:
         raise ValueError("--corpus must be a simple folder name.")
+    selected_stages = [
+        name for selected, name in (
+            (args.download, "download"), (args.clean, "clean"),
+            (args.load, "load"), (split_requested, "split"),
+            (args.rare_check, "rare-check"),
+        ) if selected
+    ]
+    log_event("info", f"Pipeline for {corpus}: stages={', '.join(selected_stages)}; seed={args.seed}")
 
     input_arg = args.input_folder.expanduser() if args.input_folder else None
     download_root = None
     input_path: Path | None = None
+    local_archive_source = False
     if args.download:
         if input_arg is None:
             raise ValueError("--download requires --in to point to a data.yaml manifest.")
@@ -224,6 +262,12 @@ def run(args: argparse.Namespace) -> int:
         if not input_path.is_file():
             raise FileNotFoundError(f"--download expects a YAML file for --in, not: {display_path(input_path)}")
         manifest_entry = load_corpus_config(input_path, corpus)
+        local_archive_source = manifest_entry.get("download", {}).get("type") == "local"
+        manifest_remove_words = configured_string_list(manifest_entry, "remove-words")
+        manifest_remove_regex = configured_string_list(manifest_entry, "remove-regex")
+        if args.clean:
+            args.remove_word = list(dict.fromkeys([*args.remove_word, *manifest_remove_words]))
+            args.remove_regex = list(dict.fromkeys([*args.remove_regex, *manifest_remove_regex]))
         manifest_ignored = manifest_entry.get("ignore-files", [])
         if manifest_ignored:
             if not isinstance(manifest_ignored, list) or any(not isinstance(item, str) for item in manifest_ignored):
@@ -249,8 +293,9 @@ def run(args: argparse.Namespace) -> int:
                 str(download_root),
             ]
         )
-        print(f"\nDownloaded corpus '{corpus}' under: {display_path(download_root / 'corpora')}")
+        log_event("ok", f"Download source is ready under {display_path(download_root / 'corpora')}")
         if not processing_selected:
+            log_event("ok", f"Pipeline finished in {time.perf_counter() - pipeline_started_at:.1f}s")
             return 0
         input_path = downloaded_source_folder(corpus, input_path, download_root)
 
@@ -262,6 +307,17 @@ def run(args: argparse.Namespace) -> int:
         else (PROJECT_DIR / "data/processed").resolve()
     )
     corpus_output = output_root / corpus
+    if local_archive_source:
+        extract_value = manifest_entry.get("extract-path")
+        if isinstance(extract_value, str) and extract_value.strip():
+            extract_dir = local_extract_path(extract_value, PROJECT_DIR)
+            corpus_output_resolved = corpus_output.resolve()
+            if (corpus_output_resolved == extract_dir or corpus_output_resolved.is_relative_to(extract_dir)
+                    or extract_dir.is_relative_to(corpus_output_resolved)):
+                raise ValueError(
+                    "Local archive extract-path overlaps the processed output directory. "
+                    "Choose an extract-path outside data.output, such as data/raw/extracted/ptb."
+                )
     cleaned_folder = corpus_output / "cleaned"
     database_path = corpus_output / f"{corpus}.db"
     train_path = corpus_output / "train.txt"
@@ -309,9 +365,13 @@ def run(args: argparse.Namespace) -> int:
         source_folder = cleaned_folder if args.clean else input_path
         # shelve can use one file or several backend-specific files; remove all
         # prior artifacts so a fresh load cannot retain records from old input.
-        for artifact in database_files(database_path):
+        old_artifacts = database_files(database_path)
+        if old_artifacts:
+            log_event("info", f"Removing {len(old_artifacts)} previous database artifact(s) before fresh load")
+        for artifact in old_artifacts:
             artifact.unlink()
         Path(str(database_path) + ".sha").unlink(missing_ok=True)
+        log_event("info", f"Loading documents from {display_path(source_folder)}; parser={parser_type}")
         command = [
             sys.executable,
             str(SRC_DIR / "data_process.py"),
@@ -335,6 +395,11 @@ def run(args: argparse.Namespace) -> int:
         db_path = database_path if loaded_this_run else database_from_input(input_path, corpus)
         if not loaded_this_run:
             verify_database_sha(db_path)
+        log_event(
+            "info",
+            f"Splitting database with ratios={ratios}, seed={args.seed}; "
+            f"ignore-list entries={len(args.ignore_file)}",
+        )
         if len(ratios) == 2:
             (corpus_output / "valid.txt").unlink(missing_ok=True)
         command = [
@@ -353,6 +418,8 @@ def run(args: argparse.Namespace) -> int:
         ]
         if len(ratios) == 3:
             command.extend(("--valid-output", str(corpus_output / "valid.txt")))
+        for ignored in args.ignore_file:
+            command.extend(("--ignore-file", ignored))
         if args.verbose:
             command.append("--verbose")
         run_stage(command)
@@ -376,6 +443,11 @@ def run(args: argparse.Namespace) -> int:
             if valid_candidate.is_file():
                 rare_tests.insert(0, valid_candidate)
 
+        log_event(
+            "info",
+            f"Rare n-gram analysis: train={display_path(rare_train)}, "
+            f"held-out files={len(rare_tests)}",
+        )
         run_stage(
             [
                 sys.executable,
@@ -389,7 +461,8 @@ def run(args: argparse.Namespace) -> int:
             ]
         )
 
-    print(f"\nPipeline outputs: {display_path(corpus_output)}")
+    log_event("ok", f"Pipeline outputs: {display_path(corpus_output)}")
+    log_event("ok", f"Pipeline finished in {time.perf_counter() - pipeline_started_at:.1f}s")
     return 0
 
 
@@ -399,6 +472,7 @@ def main() -> int:
     try:
         return run(args)
     except (FileNotFoundError, OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as exc:
+        log_event("error", str(exc))
         parser.exit(1, f"error: {exc}\n")
 
 

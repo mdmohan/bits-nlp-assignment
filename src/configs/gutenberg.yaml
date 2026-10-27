@@ -1,5 +1,5 @@
 # Brown press genres (news, editorial, reviews): feed-forward vs LSTM language model.
-name: gutenberg_nwural
+name: gutenberg_neural
 output_dir: results
 device: auto          # auto -> cuda, then mps, then cpu
 seeds: [13, 42, 2026]

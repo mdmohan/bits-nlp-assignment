@@ -1,11 +1,12 @@
 import shelve
 from pathlib import Path
 import random
+import time
 from typing import Generator, List, Sequence, Union
 import argparse
 import math
 from database_integrity import database_files
-from log_utils import display_path
+from log_utils import display_path, log_event
 
 
 def stream_sentences(source_path: Union[str, Path]) -> Generator[str, None, None]:
@@ -72,17 +73,75 @@ def _sentences_in_record(record: object) -> list[str]:
     return sentences
 
 
-def load_document_sentences(source_path: Union[str, Path]) -> list[tuple[str, list[str]]]:
+def load_document_sentences(
+    source_path: Union[str, Path], ignored_files: Sequence[str] | None = None
+) -> list[tuple[str, list[str]]]:
     """Load sentences grouped by the source-file key stored in the shelve DB."""
     path = Path(source_path)
     if not path.exists() and not database_files(path):
         raise FileNotFoundError(f"Database does not exist: {path}")
 
+    ignored = {item.replace("\\", "/").strip("/") for item in (ignored_files or [])}
+    if ignored:
+        log_event("info", f"Applying split ignore-list: {', '.join(sorted(ignored))}")
     documents: list[tuple[str, list[str]]] = []
+    skipped: list[str] = []
     with shelve.open(str(path), flag="r") as db:
         for document_id in sorted(db.keys()):
+            normalized_id = document_id.replace("\\", "/")
+            if any(
+                normalized_id == item
+                or Path(normalized_id).name == item
+                or normalized_id.endswith("/" + item)
+                for item in ignored
+            ):
+                skipped.append(Path(normalized_id).name)
+                continue
             documents.append((document_id, _sentences_in_record(db[document_id])))
+    log_event("info", f"Read {len(documents):,} source documents from database")
+    if skipped:
+        log_event(
+            "info",
+            f"Excluded {len(skipped):,} document(s) by ignore-list: {', '.join(skipped)}",
+        )
     return documents
+
+
+def partition_document_ids(
+    document_ids: Sequence[str], ratios: Sequence[float], seed: int = 42
+) -> list[list[str]]:
+    """Assign whole document IDs to partitions using deterministic largest remainder."""
+    if len(ratios) not in (2, 3):
+        raise ValueError("Provide exactly two ratios (train,test) or three (train,valid,test)")
+    if any(not math.isfinite(ratio) or ratio <= 0 for ratio in ratios):
+        raise ValueError("Every split ratio must be a finite number greater than 0")
+    if not math.isclose(sum(ratios), 1.0, rel_tol=0.0, abs_tol=1e-8):
+        raise ValueError(f"Split ratios must sum to 1.0; got {sum(ratios):.10g}")
+    if len(document_ids) < len(ratios):
+        raise ValueError(f"At least {len(ratios)} source documents are required for this split")
+
+    shuffled_ids = list(document_ids)
+    random.Random(seed).shuffle(shuffled_ids)
+    exact_counts = [len(shuffled_ids) * ratio for ratio in ratios]
+    counts = [math.floor(value) for value in exact_counts]
+    for index in sorted(
+        range(len(ratios)),
+        key=lambda i: exact_counts[i] - counts[i],
+        reverse=True,
+    )[:len(shuffled_ids) - sum(counts)]:
+        counts[index] += 1
+    for index, count in enumerate(counts):
+        if count == 0:
+            donor = max(range(len(counts)), key=counts.__getitem__)
+            counts[donor] -= 1
+            counts[index] += 1
+
+    partitions: list[list[str]] = []
+    offset = 0
+    for count in counts:
+        partitions.append(shuffled_ids[offset:offset + count])
+        offset += count
+    return partitions
 
 
 def split_document_sentences(
@@ -95,37 +154,13 @@ def split_document_sentences(
     For a two-way split, ratios are train, test. For a three-way split they
     are train, valid, test. Documents stay intact and are flattened afterward.
     """
-    if len(ratios) not in (2, 3):
-        raise ValueError("Provide exactly two ratios (train,test) or three (train,valid,test)")
-    if any(not math.isfinite(ratio) or ratio <= 0 for ratio in ratios):
-        raise ValueError("Every split ratio must be a finite number greater than 0")
-    if not math.isclose(sum(ratios), 1.0, rel_tol=0.0, abs_tol=1e-8):
-        raise ValueError(f"Split ratios must sum to 1.0; got {sum(ratios):.10g}")
     if len(documents) < 2:
         raise ValueError("At least two source documents are required for a split")
-    if len(documents) < len(ratios):
-        raise ValueError(f"At least {len(ratios)} source documents are required for this split")
-
-    shuffled_ids = [document_id for document_id, _ in documents]
-    random.Random(seed).shuffle(shuffled_ids)
-    exact_counts = [len(shuffled_ids) * ratio for ratio in ratios]
-    counts = [math.floor(value) for value in exact_counts]
-    # Largest-remainder allocation makes the document counts sum exactly.
-    for index in sorted(range(len(ratios)), key=lambda i: exact_counts[i] - counts[i], reverse=True)[:len(shuffled_ids) - sum(counts)]:
-        counts[index] += 1
-    # Ensure every requested partition is represented, moving documents from
-    # the largest partition when rounding would otherwise produce a zero.
-    for index, count in enumerate(counts):
-        if count == 0:
-            donor = max(range(len(counts)), key=counts.__getitem__)
-            counts[donor] -= 1
-            counts[index] += 1
-
-    partition_ids: list[set[str]] = []
-    offset = 0
-    for count in counts:
-        partition_ids.append(set(shuffled_ids[offset:offset + count]))
-        offset += count
+    partition_ids = [
+        set(ids) for ids in partition_document_ids(
+            [document_id for document_id, _ in documents], ratios, seed
+        )
+    ]
 
     partitions: list[list[str]] = [[] for _ in ratios]
     # Keep a stable document order in the resulting lists.
@@ -200,7 +235,14 @@ if __name__ == '__main__':
     parser_cli.add_argument(
         "--verbose",
         action="store_true",
-        help="Print sample sentences after splitting.",
+        help="Print document assignments and sample sentences after splitting.",
+    )
+    parser_cli.add_argument(
+        "--ignore-file",
+        action="append",
+        default=[],
+        metavar="NAME_OR_PATH",
+        help="Exclude a source document by file name or path suffix before splitting; repeat as needed.",
     )
 
     args = parser_cli.parse_args()
@@ -242,12 +284,23 @@ if __name__ == '__main__':
     # 2. Load or split the shelve DB. Split at source-file level before
     # flattening, so no document can appear in both partitions.
     if args.db_path and ratios is not None:
-        documents = load_document_sentences(args.db_path)
+        started_at = time.perf_counter()
+        documents = load_document_sentences(args.db_path, args.ignore_file)
         try:
             partitions = split_document_sentences(documents, ratios=ratios, seed=args.seed)
+            document_partitions = partition_document_ids(
+                [document_id for document_id, _ in documents], ratios, args.seed
+            )
         except ValueError as exc:
             parser_cli.error(str(exc))
         partition_names = ["train", "test"] if len(ratios) == 2 else ["train", "valid", "test"]
+        log_event(
+            "info",
+            f"Split settings: ratios={list(ratios)}, seed={args.seed}; "
+            f"documents=" + ", ".join(
+                f"{name} {len(ids):,}" for name, ids in zip(partition_names, document_partitions)
+            ),
+        )
         print("Sentences: " + ", ".join(f"{len(part)} {name}" for name, part in zip(partition_names, partitions)))
 
         output_paths = [args.train_output, args.valid_output, args.test_output] if len(ratios) == 3 else [args.train_output, args.test_output]
@@ -255,12 +308,15 @@ if __name__ == '__main__':
             for name, sentences, output_path in zip(partition_names, partitions, output_paths):
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 output_path.write_text("".join(sentence + "\n" for sentence in sentences), encoding="utf-8")
-                print(f"Wrote {name} sentences to: {display_path(output_path)}")
+                print(f"Wrote {name}: {len(sentences):,} sentences -> {display_path(output_path)}")
 
         if args.verbose:
+            for name, ids in zip(partition_names, document_partitions):
+                print(f"{name.title()} documents: " + ", ".join(Path(doc_id).name for doc_id in ids))
             for name, sentences in zip(partition_names, partitions):
                 if sentences:
                     print(f"{name.title()} sample:", sentences[0])
+        log_event("ok", f"Split completed in {time.perf_counter() - started_at:.1f}s")
 
     # Load the unsplit shelve DB when --split was not requested.
     elif args.db_path:

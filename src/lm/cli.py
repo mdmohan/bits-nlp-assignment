@@ -1,6 +1,7 @@
 """Interactive shell for loading and evaluating language models."""
 
 import argparse
+import heapq
 import json
 import math
 import re
@@ -39,6 +40,9 @@ def iter_sentences(path: Path, lowercase: bool, percent: float = 100):
                 yielded += 1
                 if limit is not None and yielded >= limit:
                     break
+
+
+_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
 
 
 class CountNGram:
@@ -87,6 +91,12 @@ class CountNGram:
             allowed_target_ids=allowed_target_ids,
         ).fit(encoded_sentences())
         self.counts = self.model.ngram_counts[order]
+        self._best_followers: dict[tuple[int, ...], tuple[int, int]] = {}
+        for gram, count in self.counts.items():
+            context, token = gram[:-1], gram[-1]
+            current = self._best_followers.get(context)
+            if current is None or count > current[0] or (count == current[0] and token < current[1]):
+                self._best_followers[context] = (count, token)
         self._unigram_rank = sorted(
             self.valid_target_ids,
             key=lambda token: (self.model.ngram_counts[1][(token,)], -token),
@@ -123,17 +133,30 @@ class CountNGram:
                 self._backoff_prediction_cache[context] = self._best_backoff(context)
             _, predicted = self._backoff_prediction_cache[context]
         else:
-            followers = self.model.cont_following[self.order].get(context, ())
-            if followers:
-                predicted = max(
-                    followers,
-                    key=lambda token: (self.counts[context + (token,)], -token),
-                )
+            best = self._best_followers.get(context)
+            if best is not None:
+                predicted = best[1]
             elif self.smoothing == "laplace":
                 predicted = min(self.valid_target_ids)
             else:
                 predicted = None
         return probability, predicted
+
+    def prediction_probability(self, context: tuple[int, ...]) -> float:
+        """Return the probability assigned to the model's top continuation."""
+        if self.smoothing == "backoff":
+            if context not in self._backoff_prediction_cache:
+                self._backoff_prediction_cache[context] = self._best_backoff(context)
+            return self._backoff_prediction_cache[context][0]
+        best = self._best_followers.get(context)
+        if best is None:
+            return 1.0 / self.model.V if self.smoothing == "laplace" else 0.0
+        count, _ = best
+        if self.smoothing == "laplace":
+            return (count + self.k) / (
+                self.model.context_totals[self.order][context] + self.k * self.model.V
+            )
+        return count / self.model.context_totals[self.order][context]
 
 
 class LanguageModelCLI:
@@ -251,7 +274,19 @@ class LanguageModelCLI:
 
     @staticmethod
     def _read_sentences(path: Path):
-        yield from iter_sentences(path, lowercase=False)
+        """Read line-based corpora, splitting packed prose lines only as needed."""
+        with path.open(encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                sentences = _SENTENCE_BOUNDARY.split(line) if any(
+                    marker in line for marker in (". ", "? ", "! ")
+                ) else (line,)
+                for sentence in sentences:
+                    words = sentence.split()
+                    if words:
+                        yield words
 
     def load_ngram(
         self,
@@ -361,7 +396,7 @@ class LanguageModelCLI:
         path: Path,
         ngram_info: dict | None,
         neural_info: dict | None,
-        limit: int = 100,
+        limit: int = 25,
         progress_seconds: float = 10.0,
     ):
         path = path.expanduser().resolve()
@@ -378,6 +413,8 @@ class LanguageModelCLI:
             raise ValueError("The models use different lowercase preprocessing")
         if progress_seconds < 0:
             raise ValueError("--print-progress must be zero or a positive number of seconds")
+        if limit < 0:
+            raise ValueError("--limit must be zero or a positive number")
         started_at = time.perf_counter()
         last_progress_at = started_at
         next_event_check = 10_000
@@ -400,10 +437,14 @@ class LanguageModelCLI:
         print(f"Evaluating {path.name} with {model_label}; {progress_note}", flush=True)
         bos, eos, unk = stoi[BOS], stoi[EOS], stoi[UNK]
         order = ngram_info["order"] if ngram_info else None
-        rows = []
-        nn_rows = {}
+        neural_rows = {}
         counters = {"ngram": 0, "neural": 0}
         metric_vocab = Vocab.from_list(vocab)
+        correct_samples: dict[int, dict] = {}
+        incorrect_samples: dict[int, dict] = {}
+        correct_heap: list[tuple[float, int, int, dict]] = []
+        incorrect_heap: list[tuple[float, int, int, dict]] = []
+        selected_by_event: dict[tuple[int, int], dict] = {}
 
         def retain(event, family):
             nonlocal last_progress_at
@@ -413,23 +454,58 @@ class LanguageModelCLI:
             if row_index % 10_000 == 0 and progress_seconds and now - last_progress_at >= progress_seconds:
                 print(f"  evaluation progress ({family}): {row_index:,} events ({now - started_at:.1f}s elapsed)", flush=True)
                 last_progress_at = now
-            if limit and row_index >= limit:
-                return
             prediction = event["prediction"]
-            probability = math.exp(event["log_probability"])
+            log_probability = event["log_probability"]
+            probability = math.exp(log_probability) if math.isfinite(log_probability) else 0.0
+            event_key = (event["sentence_index"], event["position"])
             if family == "neural":
-                nn_rows[row_index] = (prediction, probability)
                 if ngram_info:
-                    return
-            width = 1
-            if order:
-                width = order - 1
+                    record = selected_by_event.get(event_key)
+                    if record is not None:
+                        record["neural_prediction"] = prediction
+                        record["neural_expected_probability"] = probability
+                elif limit == 0 or row_index < limit:
+                    width = 1
+                    prefix = [bos] + event["ids"][:event["position"]]
+                    neural_rows[row_index] = [
+                        " ".join(vocab[token] for token in prefix[-width:]),
+                        vocab[event["target"]],
+                        vocab[prediction] if prediction is not None else "<unseen>",
+                        f"{probability:.6g}",
+                    ]
+                return
+
+            width = order - 1
             prefix = [bos] * width + event["ids"][:event["position"]]
-            context_text = " ".join(vocab[token] for token in prefix[-width:])
-            predicted = "<unseen>"
-            if prediction is not None:
-                predicted = vocab[prediction]
-            rows.append([context_text, vocab[event["target"]], predicted, f"{probability:.6g}"])
+            context = tuple(prefix[-width:])
+            record = {
+                "index": row_index,
+                "key": event_key,
+                "context": " ".join(vocab[token] for token in context),
+                "expected": vocab[event["target"]],
+                "prediction_text": vocab[prediction] if prediction is not None else "<unseen>",
+                "expected_probability": probability,
+                "prediction_probability": ngram_info["lm"].prediction_probability(context),
+                "correct": prediction == event["target"],
+            }
+            samples = correct_samples if record["correct"] else incorrect_samples
+            heap = correct_heap if record["correct"] else incorrect_heap
+            if limit == 0:
+                samples[row_index] = record
+                selected_by_event[event_key] = record
+            elif len(heap) < limit:
+                heapq.heappush(heap, (record["prediction_probability"], -row_index, row_index, record))
+                samples[row_index] = record
+                selected_by_event[event_key] = record
+            elif (record["prediction_probability"], -row_index) > heap[0][:2]:
+                removed = heapq.heapreplace(
+                    heap,
+                    (record["prediction_probability"], -row_index, row_index, record),
+                )
+                samples.pop(removed[2], None)
+                selected_by_event.pop(removed[3]["key"], None)
+                samples[row_index] = record
+                selected_by_event[event_key] = record
 
         ng_result = nn_result = None
         ng_nll = nn_nll = 0.0
@@ -533,15 +609,46 @@ class LanguageModelCLI:
             "Each sentence-ending target is </s>: it scores the model's probability of ending "
             "the sentence after its final word."
         )
-        cols = ["context", "expected", "ngram prediction", "P(expected)"]
-        if neural_info:
-            cols += ["neural prediction", "neural P(expected)"]
-        print(" | ".join(cols))
-        for index, row in enumerate(rows[:limit] if limit else rows):
+        if ngram_info:
+            columns = ["Context", "Expected", "N-gram prediction", "P(expected)", "P(prediction)"]
             if neural_info:
-                pred, prob = nn_rows.get(index, (-1, math.nan))
-                row += [vocab[pred] if pred >= 0 else "?", f"{prob:.6g}"]
-            print(" | ".join(row))
+                columns.extend(("Neural prediction", "Neural P(expected)"))
+            for title, samples in (
+                ("Correct n-gram predictions", correct_samples),
+                ("Incorrect n-gram predictions", incorrect_samples),
+            ):
+                ranked = sorted(
+                    samples.values(),
+                    key=lambda row: (-row["prediction_probability"], row["index"]),
+                )
+                shown = "all" if limit == 0 else f"top {limit}"
+                print(f"\n{title} ({shown}, ranked by P(prediction))")
+                if not ranked:
+                    print("(no examples)")
+                    continue
+                table_rows = []
+                for row in ranked:
+                    values = [
+                        row["context"], row["expected"], row["prediction_text"],
+                        f"{row['expected_probability']:.6g}",
+                        f"{row['prediction_probability']:.6g}",
+                    ]
+                    if neural_info:
+                        neural_prediction = row.get("neural_prediction")
+                        neural_expected_probability = row.get("neural_expected_probability", math.nan)
+                        values.extend((
+                            vocab[neural_prediction] if neural_prediction is not None else "?",
+                            f"{neural_expected_probability:.6g}",
+                        ))
+                    table_rows.append(values)
+                self._print_table(columns, table_rows)
+        else:
+            columns = ["Context", "Expected", "Neural prediction", "P(expected)"]
+            table_rows = [neural_rows[index] for index in sorted(neural_rows)]
+            if table_rows:
+                self._print_table(columns, table_rows)
+            else:
+                print("(no examples)")
         return {"ngram": ng_result, "neural": nn_result}
 
     def resolve_neural(self, name: str):
@@ -557,6 +664,7 @@ class LanguageModelCLI:
         print("  ngram NAME --n N --train TRAIN.txt [--min-freq N] [--smoothing mle|laplace|backoff]")
         print("       Laplace requires --k; backoff accepts --discount (default 0.75).")
         print("  ngram NAME --evaluate FILE.txt [--limit N] [--print-progress SECONDS]")
+        print("       Shows up to 25 correct and incorrect n-gram predictions, ranked by P(prediction); --limit 0 shows all.")
         print("  compare --one ngram NAME --two neural CHECKPOINT --test FILE.txt [--limit N] [--print-progress SECONDS]")
         print("  models | help | quit")
 
@@ -600,7 +708,7 @@ class LanguageModelCLI:
                     parser.add_argument("--smoothing", choices=("mle", "laplace", "backoff"), default="mle")
                     parser.add_argument("--k", type=float, help="required Laplace add-k value")
                     parser.add_argument("--discount", type=float, default=0.75, help="backoff discount")
-                    parser.add_argument("--limit", type=int, default=100)
+                    parser.add_argument("--limit", type=int, default=25)
                     parser.add_argument("--print-progress", type=float, default=10.0)
                     a = parser.parse_args(args[1:])
                     if a.n is not None:
@@ -619,7 +727,7 @@ class LanguageModelCLI:
                     parser.add_argument("--one", nargs=2, required=True, metavar=("TYPE", "NAME"))
                     parser.add_argument("--two", nargs=2, required=True, metavar=("TYPE", "NAME"))
                     parser.add_argument("--test", type=Path, required=True)
-                    parser.add_argument("--limit", type=int, default=100)
+                    parser.add_argument("--limit", type=int, default=25)
                     parser.add_argument("--print-progress", type=float, default=10.0)
                     a = parser.parse_args(args[1:])
                     models = []

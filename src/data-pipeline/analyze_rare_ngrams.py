@@ -29,7 +29,7 @@ from typing import Iterator
 
 from nltk.tokenize import TreebankWordTokenizer
 from nltk.util import ngrams
-from log_utils import display_path
+from log_utils import display_path, log_event
 
 
 TOKENIZER = TreebankWordTokenizer()
@@ -47,16 +47,14 @@ class ProgressBar:
         self.current = 0
         self.started = time.monotonic()
         self.last_update = 0.0
-        self.last_percent = -1
+        self.update_interval = 10.0
 
     def update(self, amount: int = 1) -> None:
         self.current += amount
         now = time.monotonic()
         percent = min(100, int(self.current * 100 / self.total))
-        milestone = percent // 5
-        if milestone != self.last_percent or now - self.last_update >= 1:
+        if percent == 100 or now - self.last_update >= self.update_interval:
             self._draw(percent, now)
-            self.last_percent = milestone
             self.last_update = now
 
     def _draw(self, percent: int, now: float) -> None:
@@ -318,6 +316,12 @@ def main() -> int:
     if train_path in test_paths:
         parser.error("--train and --test must refer to different files")
 
+    started_at = time.perf_counter()
+    log_event(
+        "info",
+        f"Rare n-gram analysis started: train={display_path(train_path)}, "
+        f"held-out files={len(test_paths)}, seed={args.seed}",
+    )
     try:
         print("Pass 1/4: counting training vocabulary…", flush=True)
         vocabulary = build_vocabulary(train_path, args.min_word_count)
@@ -346,6 +350,7 @@ def main() -> int:
             test_paths, vocabulary, rare_train_counts
         )
     except (OSError, UnicodeError, ValueError) as exc:
+        log_event("error", f"Rare n-gram analysis failed: {exc}")
         parser.error(str(exc))
 
     print(f"Test sentences: {test_sentence_count:,}")
@@ -398,6 +403,7 @@ def main() -> int:
             writer.writerows(csv_rows)
         print(f"\nWrote examples to: {display_path(output_path)}")
 
+    log_event("ok", f"Rare n-gram analysis finished in {time.perf_counter() - started_at:.1f}s")
     return 0
 
 

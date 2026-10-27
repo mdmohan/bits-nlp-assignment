@@ -51,11 +51,10 @@ class LanguageModelController:
         model_params: dict,
         train_config: TrainConfig,
         seed: int,
-        artifact_name: str | None = None,
+        artifact_dir: Path | None = None,
     ) -> dict:
         """Train one model with one seed and evaluate it on the test set."""
-        run_label = artifact_name or model_name
-        print(f"\n=== {run_label} | seed {seed} | device {self.device} ===")
+        print(f"\n=== {model_name} | seed {seed} | device {self.device} ===")
         set_seed(seed)
         model = build_model(model_name, len(self.vocab), self.vocab.pad_id, **model_params)
         trainer = Trainer(model, train_config, self.vocab.pad_id, self.device)
@@ -84,10 +83,12 @@ class LanguageModelController:
         }
         print(f"  test ppl {test['perplexity']:.2f}")
 
-        if self.output_dir:
-            run_name = f"{run_label}_seed{seed}"
-            pd.DataFrame(history).to_csv(self.output_dir / f"{run_name}_history.csv", index=False)
-            torch.save(model.state_dict(), self.output_dir / f"{run_name}.pt")
+        save_dir = Path(artifact_dir) if artifact_dir is not None else self.output_dir
+        if save_dir:
+            save_dir.mkdir(parents=True, exist_ok=True)
+            run_name = f"{model_name}_seed{seed}"
+            pd.DataFrame(history).to_csv(save_dir / f"{run_name}_history.csv", index=False)
+            torch.save(model.state_dict(), save_dir / f"{run_name}.pt")
         return result
 
 
@@ -229,6 +230,24 @@ def run_from_config(
             context_size = model.get("params", {}).get("context_size", 3)
             label += f" (context_size={context_size})"
         model_labels.append(label)
+
+    # Each configured model entry gets its own artifact directory. Duplicate
+    # algorithm names (for example, FFNNs with contexts 1 and 2) therefore
+    # cannot overwrite one another's checkpoint or training history.
+    variant_counts: dict[str, int] = {}
+    run_specs = []
+    for model in selected_models:
+        model_name = str(model.get("name", "model"))
+        if model_name.casefold() == "ffnn":
+            context_size = model.get("params", {}).get("context_size", 3)
+            base_label = f"ffnn_ctx{context_size}"
+        else:
+            base_label = model_name
+        variant_counts[base_label] = variant_counts.get(base_label, 0) + 1
+        occurrence = variant_counts[base_label]
+        variant_label = base_label if occurrence == 1 else f"{base_label}_{occurrence}"
+        run_specs.append((model, variant_label))
+
     print(
         "Run selection: "
         + ", ".join(model_labels)
@@ -236,23 +255,33 @@ def run_from_config(
         flush=True,
     )
     results = []
-    for model in selected_models:
+    for model, variant_label in run_specs:
+        is_ffnn = str(model.get("name", "")).casefold() == "ffnn"
+        context_size = model.get("params", {}).get("context_size", 3) if is_ffnn else None
+        variant_dir = output_dir / "models" / variant_label
+        variant_dir.mkdir(parents=True, exist_ok=True)
+        variant_config = dict(config)
+        variant_config["models"] = [model]
+        variant_config["model_variant"] = variant_label
+        if is_ffnn:
+            variant_config["context_sizes"] = [context_size]
+        (variant_dir / "config.yaml").write_text(yaml.safe_dump(variant_config, sort_keys=False))
+        (variant_dir / "vocab.json").write_text(json.dumps(controller.vocab.itos))
+        (variant_dir / "data_stats.json").write_text(json.dumps(controller.data_stats, indent=2))
         for seed in selected_seeds:
-            is_ffnn = str(model.get("name", "")).casefold() == "ffnn"
-            context_size = model.get("params", {}).get("context_size", 3) if is_ffnn else None
-            artifact_name = f"ffnn_ctx{context_size}" if is_ffnn and context_sizes else None
             result = controller.run(
                 model["name"], model.get("params", {}), train_config, seed,
-                artifact_name=artifact_name,
+                artifact_dir=variant_dir,
             )
             if is_ffnn:
                 result["context_size"] = context_size
+            result["variant"] = variant_label
             results.append(result)
     for result in results:
         result["train_percent"] = train_percent
 
     runs = pd.DataFrame(results)
-    group_columns = ["model"]
+    group_columns = ["variant", "model"]
     if "context_size" in runs.columns:
         group_columns.append("context_size")
     summary = runs.groupby(group_columns, dropna=False)[

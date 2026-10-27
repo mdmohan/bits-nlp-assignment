@@ -83,6 +83,17 @@ python src/data-pipeline/data_download.py webtext --out data/raw
 
 The old `--corpus NAME` spelling is still accepted. NLTK stores its package under `<out>/corpora/`. For a URL-based corpus, add a registry entry with `download.type: url` and `download.url`; optionally set `filename`, `sha256`, and `extract-path` for ZIP content. A URL must point directly to a downloadable file. ZIPs are extracted when the download is combined with loading, or by the orchestrator when it finds a local archive.
 
+For an archive you copied into `data/raw`, use `download.type: local`. Set `download.package` to the archive path and `extract-path` to its destination. Relative paths use the project root; absolute paths are also accepted. ZIP, `.tar`, `.tar.gz`, and `.tgz` archives are supported. The archive remains in place, and extraction rejects unsafe paths and links. Keep the extraction destination separate from `data.output` (normally `data/processed`) so later runs cannot treat extracted input files as processed output. For example:
+
+```yaml
+download:
+  type: local
+  package: data/raw/ptb.tar.gz
+extract-path: data/raw/extracted/ptb
+```
+
+Then run the normal orchestrator configuration for that corpus; it resolves the extracted source folder and continues through cleaning/loading/splitting. The standalone downloader can also extract it with `python src/data-pipeline/data_download.py ptb --conf src/data-pipeline/data.yaml`.
+
 Corpus entries may also define `ignore-files` as file names or paths relative to the resolved corpus folder. The orchestrator forwards these entries to the loading stage, which excludes matching files before parsing. For example:
 
 ```yaml
@@ -90,6 +101,19 @@ extract-path: corpora/gutenberg
 ignore-files:
   - README
 ```
+
+Cleaning rules can be configured on each corpus entry with `remove-words` and `remove-regex`, both arrays of strings. They are forwarded as repeated cleaning options when the orchestrator enables cleaning:
+
+```yaml
+remove-words:
+  - urlLink
+  - nbsp
+remove-regex:
+  - 'https?://\S+'
+  - '\bfoo\d+'
+```
+
+`remove-words` removes literal whole words case-insensitively; `remove-regex` removes matches for Python regular expressions. These manifest rules apply only when cleaning is enabled (`data.clean: true` in the orchestrator config or `--clean` in a download-driven pipeline run). Command-line remove options are combined with the manifest lists.
 
 Example command using a config file in another location:
 

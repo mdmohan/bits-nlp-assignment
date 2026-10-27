@@ -1,0 +1,44 @@
+
+
+# Brown press genres (news, editorial, reviews): feed-forward vs LSTM language model.
+name: webtext-nn
+output_dir: results
+device: auto          # auto -> cuda, then mps, then cpu
+seeds: [13]
+
+data:
+  corpus: webtext
+  split_ratios: [0.7, 0.2, 0.1]  # train, validation, test
+  split_seed: 2000
+  use_cached: true
+  input: data/raw                # raw-data root
+  output: data/processed         # processed-data root
+  manifest: src/data-pipeline/data.yaml
+  clean: true
+  rare_check: true
+
+# data:
+#   loader: brown
+#   lowercase: true
+#   params:
+#     categories: [news, editorial, reviews]
+#     ratios: [0.8, 0.1, 0.1]   # split by whole documents
+#     split_seed: 42
+
+vocab:
+  min_freq: 1                 # training words seen once become <unk>
+
+models:
+  - name: ffnn
+    params: {context_size: 1, embed_dim: 128, hidden_dim: 256, dropout: 0.3}
+  - name: ffnn
+    params: {context_size: 2, embed_dim: 128, hidden_dim: 256, dropout: 0.3}
+  - name: lstm
+    params: {embed_dim: 128, hidden_dim: 256, num_layers: 1, dropout: 0.3}
+
+training:
+  batch_size: 32
+  epochs: 20
+  lr: 0.001
+  grad_clip: 1.0
+  patience: 3

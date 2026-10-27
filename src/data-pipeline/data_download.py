@@ -7,6 +7,8 @@ import shutil
 import urllib.error
 import urllib.request
 import hashlib
+import tarfile
+import time
 import zipfile
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -19,7 +21,7 @@ except ImportError:  # pragma: no cover - user environment dependency check
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-from log_utils import display_path
+from log_utils import display_path, log_event
 
 
 def download_url(
@@ -97,6 +99,14 @@ def configured_extract_path(entry: dict, package: str | None = None) -> Path:
     return path
 
 
+def configured_string_list(entry: dict, key: str) -> list[str]:
+    """Read an optional manifest array containing only non-empty strings."""
+    value = entry.get(key, [])
+    if not isinstance(value, list) or any(not isinstance(item, str) or not item.strip() for item in value):
+        raise ValueError(f"Corpus manifest field '{key}' must be an array of non-empty strings")
+    return value
+
+
 def safe_extract_zip(archive_path: Path, target_dir: Path) -> None:
     """Extract a ZIP after rejecting members that could escape the target root."""
     target_root = target_dir.resolve()
@@ -111,10 +121,64 @@ def safe_extract_zip(archive_path: Path, target_dir: Path) -> None:
         archive.extractall(target_root)
 
 
+def safe_extract_archive(archive_path: Path, target_dir: Path) -> None:
+    """Safely extract ZIP or tar archives, rejecting traversal and links."""
+    if zipfile.is_zipfile(archive_path):
+        safe_extract_zip(archive_path, target_dir)
+        return
+    if not tarfile.is_tarfile(archive_path):
+        raise ValueError(f"Unsupported archive format (expected ZIP or tar): {archive_path.name}")
+
+    target_root = target_dir.resolve()
+    target_root.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive_path, mode="r:*") as archive:
+        for member in archive.getmembers():
+            member_path = Path(member.name.replace("\\", "/"))
+            destination = (target_root / member_path).resolve()
+            if (member_path.is_absolute() or ".." in member_path.parts
+                    or not destination.is_relative_to(target_root)):
+                raise ValueError(f"Unsafe path in corpus archive: {member.name}")
+            if member.issym() or member.islnk() or member.isdev() or member.isfifo():
+                raise ValueError(f"Links and device files are not allowed in corpus archives: {member.name}")
+        archive.extractall(target_root)
+
+
+def local_archive_path(package: str, project_root: Path, raw_root: Path | None = None) -> Path:
+    """Resolve a local archive path relative to the project (or raw root)."""
+    path = Path(package).expanduser()
+    if path.is_absolute():
+        return path.resolve()
+    project_path = (project_root / path).resolve()
+    if project_path.is_file() or raw_root is None:
+        return project_path
+    raw_path = (raw_root / path).resolve()
+    return raw_path if raw_path.is_file() else project_path
+
+
+def local_extract_path(value: str, project_root: Path) -> Path:
+    """Resolve local archive extraction path; relative paths use project root."""
+    path = Path(value).expanduser()
+    if not path.is_absolute() and ".." in path.parts:
+        raise ValueError(f"Unsafe corpus extract-path in manifest: {value!r}")
+    return (path if path.is_absolute() else project_root / path).resolve()
+
+
+def extracted_source_folder(extract_dir: Path) -> Path:
+    """Return the sole top-level directory when an archive has one, else root."""
+    if not extract_dir.is_dir():
+        raise FileNotFoundError(f"Archive extraction directory was not created: {extract_dir}")
+    entries = list(extract_dir.iterdir())
+    directories = [entry for entry in entries if entry.is_dir()]
+    files = [entry for entry in entries if entry.is_file()]
+    if len(directories) == 1 and not files:
+        return directories[0]
+    return extract_dir
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Download a named NLTK corpus, or download one file from a direct URL. "
+            "Download an NLTK corpus or URL file, or extract a configured local archive. "
             "The output root defaults to data/raw."
         )
     )
@@ -172,6 +236,8 @@ def main() -> int:
         entry = load_corpus_config(config_path, corpus)
         download = entry["download"]
         source_type = "url" if args.url else download.get("type")
+        started_at = time.perf_counter()
+        log_event("info", f"Download stage started: corpus={corpus}, source={source_type}")
         if source_type == "url":
             url = args.url or download.get("url")
             if not isinstance(url, str) or not url:
@@ -196,7 +262,7 @@ def main() -> int:
                 # corpus directory's parent (`raw/corpora`), not `raw`.
                 safe_extract_zip(package_zip, package_dir.parent)
             if package_dir.is_dir():
-                print(f"NLTK corpus package '{package}' is available at: {display_path(package_dir)}")
+                log_event("skip", f"NLTK package '{package}' already extracted at {display_path(package_dir)}")
             else:
                 succeeded = nltk.download(package, download_dir=str(output_root))
                 if not succeeded:
@@ -209,12 +275,29 @@ def main() -> int:
                         f"NLTK download completed but the configured extract path was not found: {package_dir}"
                     )
                 print(f"Downloaded NLTK corpus package '{package}' to: {display_path(package_dir)}")
+        elif source_type == "local":
+            package = download.get("package")
+            extract_path = entry.get("extract-path")
+            if not isinstance(package, str) or not package.strip():
+                raise ValueError(f"Corpus '{corpus}' has local download type but no archive package path")
+            if not isinstance(extract_path, str) or not extract_path.strip():
+                raise ValueError(f"Corpus '{corpus}' has local download type but no extract-path")
+            project_root = SCRIPT_DIR.parent.parent
+            archive_path = local_archive_path(package, project_root, output_root)
+            if not archive_path.is_file():
+                raise FileNotFoundError(f"Local corpus archive was not found: {archive_path}")
+            target_dir = local_extract_path(extract_path, project_root)
+            safe_extract_archive(archive_path, target_dir)
+            source_dir = extracted_source_folder(target_dir)
+            print(f"Extracted local corpus archive to: {display_path(source_dir)}")
         else:
             raise ValueError(
-                f"Corpus '{corpus}' has unsupported download type {source_type!r}; use 'nltk' or 'url'"
+                f"Corpus '{corpus}' has unsupported download type {source_type!r}; use 'nltk', 'url', or 'local'"
             )
     except (OSError, RuntimeError, urllib.error.URLError, ValueError) as exc:
+        log_event("error", f"Download stage failed: {exc}")
         parser.error(str(exc))
+    log_event("ok", f"Download stage finished in {time.perf_counter() - started_at:.1f}s")
     return 0
 
 

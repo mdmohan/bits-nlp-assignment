@@ -9,7 +9,7 @@ seeds: [13]
 data:
   corpus: webtext
   split_ratios: [0.7, 0.2, 0.1]  # train, validation, test
-  split_seed: 2000
+  split_seed: 3999
   use_cached: true
   input: data/raw                # raw-data root
   output: data/processed         # processed-data root

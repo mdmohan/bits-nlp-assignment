@@ -27,7 +27,10 @@ Processing defaults to `data/processed`; download mode defaults to `data/raw`. P
 ├── train.txt
 ├── valid.txt             # Present for a three-way split
 ├── test.txt
-└── rare-ngrams.csv
+├── rare-context-bigram.csv
+├── rare-seq-bigram.csv
+├── rare-context-trigram.csv
+└── rare-seq-trigram.csv
 ```
 
 Only stages selected on the command line run, so files from unselected stages are not regenerated.
@@ -204,7 +207,18 @@ python src/data-pipeline/data_pipeline.py \
 
 Without a split, the pipeline reads `train.txt` and `test.txt` from `--in` (or from `data/processed/<corpus>/` if `--in` is omitted). It also recognizes `train_sentences.txt` and `test_sentences.txt`. For a three-way split, rare n-gram analysis uses train for vocabulary/counts and combines valid plus test as one held-out chunk.
 
-The report is written to `<out>/<corpus>/rare-ngrams.csv`. Candidate discovery samples up to 20,000 test sentences; counts for discovered candidates are then counted over the full train and test files. This CSV is an example list, not a complete inventory or corpus-wide unseen-ngram percentage.
+Rare-check runs the analyzer for bigrams and trigrams over every held-out sentence. It writes `rare-context-bigram.csv` and `rare-context-trigram.csv` for n-grams whose context contains at least one word absent from the training vocabulary, and `rare-seq-bigram.csv` and `rare-seq-trigram.csv` for full n-gram sequences absent from training. Each CSV has one row per distinct held-out sequence, with train and held-out occurrence counts. When a three-way split is used, validation and test are combined as the held-out data.
+
+Run the analyzer directly for one order:
+
+```bash
+python src/data-pipeline/analyze_rare_ngrams.py \
+  --train data/processed/webtext/train.txt \
+  --test data/processed/webtext/test.txt \
+  --n 2
+```
+
+It writes its two CSVs beside the first `--test` file. To score only the first 100 matching rows from one CSV in the interactive model CLI, use `compare --one ngram NAME --two ngram NAME --csv PATH --n 100`. Omitting `--n` scores every matching row.
 
 ## Config-driven preparation
 

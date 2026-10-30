@@ -1,9 +1,13 @@
 """Interactive shell for loading and evaluating language models."""
 
 import argparse
+import atexit
+import csv
+import glob
 import heapq
 import json
 import math
+import os
 import re
 import shlex
 import sys
@@ -14,6 +18,11 @@ from pathlib import Path
 
 import torch
 import yaml
+
+try:
+    import readline
+except ImportError:  # Windows and some minimal Python builds
+    readline = None
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -167,6 +176,326 @@ class LanguageModelCLI:
         self.neural: dict[str, dict] = {}
         self.ngrams: dict[str, dict] = {}
         self.active_neural: str | None = None
+
+    @staticmethod
+    def _print_table(columns: list[str], rows: list[list[str]]) -> None:
+        """Print rows as a width-aligned plain-text table."""
+        widths = [
+            max([len(column), *(len(str(row[index])) for row in rows)])
+            for index, column in enumerate(columns)
+        ]
+        border = "+-" + "-+-".join("-" * width for width in widths) + "-+"
+
+        def print_row(values):
+            cells = " | ".join(
+                f"{str(value):<{width}}" for value, width in zip(values, widths)
+            )
+            print(f"| {cells} |")
+
+        print(border)
+        print_row(columns)
+        print(border)
+        for row in rows:
+            print_row(row)
+        print(border)
+
+    @torch.no_grad()
+    def compare_csv(self, path: Path, ngram_info: dict, neural_info: dict, limit: int | None = None) -> None:
+        """Score rare n-gram CSV entries with a matching n-gram and neural model."""
+        path = path.expanduser().resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"CSV file not found: {path}")
+        if ngram_info["vocab"] != neural_info["vocab"]:
+            raise ValueError("Vocabulary differs; rebuild the n-gram using the neural model's training vocabulary")
+        if ngram_info["lowercase"] != neural_info["lowercase"]:
+            raise ValueError("The models use different lowercase preprocessing")
+
+        expected_order = ngram_info["order"]
+        rows = []
+        skipped_order = skipped_invalid = skipped_eos = 0
+        with path.open(encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle)
+            required = {"sequence", "order"}
+            if not reader.fieldnames or not required.issubset(reader.fieldnames):
+                raise ValueError("Rare n-gram CSV must include 'order' and 'sequence' columns")
+
+            for row in reader:
+                try:
+                    row_order = int(row["order"])
+                    tokens = row["sequence"].split()
+                except (AttributeError, TypeError, ValueError):
+                    skipped_invalid += 1
+                    continue
+                if row_order != expected_order:
+                    skipped_order += 1
+                    continue
+                if len(tokens) != expected_order:
+                    skipped_invalid += 1
+                    continue
+                if tokens[-1] == EOS:
+                    skipped_eos += 1
+                    continue
+                if limit is not None and len(rows) >= limit:
+                    continue
+
+                if ngram_info["lowercase"]:
+                    tokens = [token.lower() for token in tokens]
+                context_words, expected_word = tokens[:-1], tokens[-1]
+                ngram_stoi = ngram_info["stoi"]
+                ngram_unk = ngram_stoi[UNK]
+                context_ids = [ngram_stoi.get(word, ngram_unk) for word in context_words]
+                context_ids = [ngram_stoi[BOS]] * (expected_order - 1 - len(context_ids)) + context_ids
+                expected_id = ngram_stoi.get(expected_word, ngram_unk)
+                context = tuple(context_ids)
+                ngram_probability, ngram_prediction = ngram_info["lm"].score(context, expected_id)
+                ngram_top_probability = ngram_info["lm"].prediction_probability(context)
+
+                neural_stoi = neural_info["stoi"]
+                neural_unk = neural_stoi[UNK]
+                neural_context_words = list(context_words)
+                while (
+                    len(neural_context_words) > 1
+                    and neural_context_words[0] == BOS
+                    and neural_context_words[1] == BOS
+                ):
+                    neural_context_words.pop(0)
+                neural_context = [neural_stoi.get(word, neural_unk) for word in neural_context_words]
+                if not neural_context_words or neural_context_words[0] != BOS:
+                    neural_context.insert(0, neural_stoi[BOS])
+                neural_input = torch.tensor(
+                    [neural_context],
+                    dtype=torch.long,
+                    device=self.device,
+                )
+                logits = mask_logits(
+                    neural_info["model"](neural_input)[:, -1, :].float(),
+                    neural_info.get("allowed_target_ids"),
+                )
+                probabilities = torch.softmax(logits, dim=-1)[0]
+                neural_prediction = int(probabilities.argmax().item())
+                neural_expected_probability = float(probabilities[neural_stoi.get(expected_word, neural_unk)].item())
+
+                rows.append([
+                    str(expected_order),
+                    " ".join(context_words),
+                    expected_word,
+                    ngram_info["vocab"][ngram_prediction] if ngram_prediction is not None else "<unseen>",
+                    f"{ngram_probability:.6g}",
+                    f"{ngram_top_probability:.6g}",
+                    neural_info["vocab"][neural_prediction],
+                    f"{neural_expected_probability:.6g}",
+                    row.get("train_count", ""),
+                    row.get("test_count", ""),
+                ])
+
+        print(f"Rare n-gram CSV: {self._display_path(path)}")
+        print(f"Rows scored: {len(rows):,}; skipped for different order: {skipped_order:,}; invalid rows: {skipped_invalid:,}")
+        print(f"Sentence-ending targets skipped: {skipped_eos:,}")
+        if not rows:
+            print(f"No valid {expected_order}-gram rows found in the CSV.")
+            return
+        self._print_table(
+            [
+                "Order", "Context", "Expected", "N-gram prediction", "N-gram P(expected)",
+                "N-gram P(top)", "Neural prediction", "Neural P(expected)", "Train count", "Test count",
+            ],
+            rows,
+        )
+
+    def compare_ngram_models(
+        self,
+        path: Path,
+        first: dict,
+        second: dict,
+        limit: int = 25,
+        progress_seconds: float = 10.0,
+    ) -> None:
+        """Evaluate two n-gram models on the same file and show paired results."""
+        path = path.expanduser().resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"Evaluation file not found: {path}")
+        if first["vocab"] != second["vocab"]:
+            raise ValueError("Vocabulary differs; build both n-gram models from the same training vocabulary")
+        if first["lowercase"] != second["lowercase"]:
+            raise ValueError("The models use different lowercase preprocessing")
+        if limit < 0 or progress_seconds < 0:
+            raise ValueError("--limit and --print-progress must be zero or positive")
+
+        vocab = Vocab.from_list(first["vocab"])
+        samples = [{}, {}]
+        started = time.perf_counter()
+        last_progress = [started, started]
+
+        def make_sink(slot, model_info):
+            count = 0
+
+            def retain(event):
+                nonlocal count
+                count += 1
+                now = time.perf_counter()
+                if progress_seconds and now - last_progress[slot] >= progress_seconds:
+                    print(
+                        f"  {model_info['name']} progress: {count:,} events "
+                        f"({now - started:.1f}s elapsed)",
+                        flush=True,
+                    )
+                    last_progress[slot] = now
+                if event["eos"] or (limit and len(samples[slot]) >= limit):
+                    return
+                key = (event["sentence_index"], event["position"])
+                probability = math.exp(event["log_probability"]) if math.isfinite(event["log_probability"]) else 0.0
+                samples[slot][key] = {
+                    "expected": first["vocab"][event["target"]],
+                    "prediction": first["vocab"][event["prediction"]] if event["prediction"] is not None else "<unseen>",
+                    "probability": probability,
+                    "ids": event["ids"],
+                    "position": event["position"],
+                }
+
+            return retain
+
+        results = []
+        for slot, model_info in enumerate((first, second)):
+            results.append(evaluate_model(
+                model_info["lm"], vocab, iter_sentences(path, model_info["lowercase"]), "ngram",
+                event_sink=make_sink(slot, model_info), case_limit=0,
+            ))
+
+        total = results[0]["tokens"]
+        words = results[0]["word_tokens"]
+        oov = results[0]["oov_tokens"]
+        print(f"Evaluation finished in {time.perf_counter() - started:.1f}s.")
+        print(f"\nCompared on {self._display_path(path)}")
+        print(
+            f"Sentences: {results[0]['sentences']:,}; word tokens: {words:,}; "
+            f"perplexity events (including </s>): {total:,}; OOV: {oov:,}/{words:,} "
+            f"({oov / words:.2%})" if words else
+            f"Sentences: {results[0]['sentences']:,}; perplexity events: {total:,}; OOV: 0"
+        )
+        print(
+            f"Sentence-ending targets excluded from word prediction metrics: "
+            f"{results[0]['sentence_end_targets']:,}"
+        )
+
+        metric_rows = []
+        for label, result in zip((first["name"], second["name"]), results):
+            word_result = result["word_metrics"]
+            accuracy = word_result["accuracy"] or 0.0
+            if result["perplexity"] is not None:
+                perplexity = f"{result['perplexity']:.5g}"
+            elif result["zero_probability_events"]:
+                perplexity = f"infinite ({result['zero_probability_events']:,} zero events)"
+            else:
+                perplexity = result["status"]
+            coverage = (
+                word_result["context_covered"] / word_result["tokens"]
+                if word_result["tokens"] else 0.0
+            )
+            metric_rows.append([
+                label,
+                f"{word_result['correct']:,}/{word_result['tokens']:,} ({accuracy:.2%})",
+                f"{coverage:.2%}",
+                f"{result['zero_probability_events']:,}/{result['tokens']:,}",
+                perplexity,
+            ])
+        self._print_table(
+            ["Model", "Word correct / top-1 accuracy", "Word context coverage", "Zero-probability (incl. </s>)", "Perplexity (incl. </s>)"],
+            metric_rows,
+        )
+
+        keys = sorted(set(samples[0]) | set(samples[1]))
+        if limit:
+            keys = keys[:limit]
+        width = max(first["order"], second["order"]) - 1
+        paired_rows = []
+        for key in keys:
+            record = samples[0].get(key) or samples[1].get(key)
+            prefix = [vocab.stoi[BOS]] * width + record["ids"][:record["position"]]
+            context = " ".join(first["vocab"][token] for token in prefix[-width:]) if width else ""
+            one, two = samples[0].get(key, {}), samples[1].get(key, {})
+            paired_rows.append([
+                context,
+                record["expected"],
+                one.get("prediction", "—"),
+                f"{one['probability']:.6g}" if "probability" in one else "—",
+                two.get("prediction", "—"),
+                f"{two['probability']:.6g}" if "probability" in two else "—",
+            ])
+        print(f"\nPaired word predictions (first {len(paired_rows):,}; sentence-ending targets omitted)")
+        if paired_rows:
+            self._print_table(
+                ["Context", "Expected", first["name"] + " prediction", first["name"] + " P(expected)",
+                 second["name"] + " prediction", second["name"] + " P(expected)"],
+                paired_rows,
+            )
+        else:
+            print("(no word targets)")
+
+    def compare_ngram_csv(self, path: Path, first: dict, second: dict, limit: int | None = None) -> None:
+        """Score rare CSV rows against two same-order n-gram models."""
+        path = path.expanduser().resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"CSV file not found: {path}")
+        if first["order"] != second["order"]:
+            raise ValueError("Rare CSV comparison requires both n-gram models to have the same order")
+        if first["vocab"] != second["vocab"]:
+            raise ValueError("Vocabulary differs; build both n-gram models from the same training vocabulary")
+        if first["lowercase"] != second["lowercase"]:
+            raise ValueError("The models use different lowercase preprocessing")
+
+        rows = []
+        skipped_order = skipped_invalid = skipped_eos = 0
+        with path.open(encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle)
+            if not reader.fieldnames or not {"order", "sequence"}.issubset(reader.fieldnames):
+                raise ValueError("Rare n-gram CSV must include 'order' and 'sequence' columns")
+            for row in reader:
+                try:
+                    row_order = int(row["order"])
+                    tokens = row["sequence"].split()
+                except (AttributeError, TypeError, ValueError):
+                    skipped_invalid += 1
+                    continue
+                if row_order != first["order"]:
+                    skipped_order += 1
+                    continue
+                if len(tokens) != row_order:
+                    skipped_invalid += 1
+                    continue
+                if tokens[-1] == EOS:
+                    skipped_eos += 1
+                    continue
+                if limit is not None and len(rows) >= limit:
+                    continue
+                if first["lowercase"]:
+                    tokens = [token.lower() for token in tokens]
+                context_words, expected_word = tokens[:-1], tokens[-1]
+                ids = first["stoi"]
+                context = tuple(ids.get(word, ids[UNK]) for word in context_words)
+                target = ids.get(expected_word, ids[UNK])
+                current = []
+                for model in (first, second):
+                    probability, prediction = model["lm"].score(context, target)
+                    current.extend([
+                        model["vocab"][prediction] if prediction is not None else "<unseen>",
+                        f"{probability:.6g}",
+                    ])
+                rows.append([
+                    " ".join(context_words), expected_word,
+                    *current,
+                    row.get("train_count", ""), row.get("test_count", ""),
+                ])
+        print(f"Rare n-gram CSV: {self._display_path(path)}")
+        print(f"Rows scored: {len(rows):,}; skipped for different order: {skipped_order:,}; invalid rows: {skipped_invalid:,}")
+        print(f"Sentence-ending targets skipped: {skipped_eos:,}")
+        if rows:
+            self._print_table(
+                ["Context", "Expected", first["name"] + " prediction", first["name"] + " P(expected)",
+                 second["name"] + " prediction", second["name"] + " P(expected)", "Train count", "Test count"],
+                rows,
+            )
+        else:
+            print(f"No valid {first['order']}-gram rows found in the CSV.")
 
     @staticmethod
     def _display_path(path: Path) -> str:
@@ -445,6 +774,9 @@ class LanguageModelCLI:
         correct_heap: list[tuple[float, int, int, dict]] = []
         incorrect_heap: list[tuple[float, int, int, dict]] = []
         selected_by_event: dict[tuple[int, int], dict] = {}
+        # Track only retained contexts, keeping this bounded by 2 * limit.
+        # With --limit 0, all unique contexts are intentionally retained.
+        used_contexts = {"correct": {}, "incorrect": {}}
 
         def retain(event, family):
             nonlocal last_progress_at
@@ -454,6 +786,10 @@ class LanguageModelCLI:
             if row_index % 10_000 == 0 and progress_seconds and now - last_progress_at >= progress_seconds:
                 print(f"  evaluation progress ({family}): {row_index:,} events ({now - started_at:.1f}s elapsed)", flush=True)
                 last_progress_at = now
+            # Keep EOS in aggregate accuracy/perplexity, but omit these obvious
+            # sentence-boundary examples from the prediction tables.
+            if event["target"] == eos:
+                return
             prediction = event["prediction"]
             log_probability = event["log_probability"]
             probability = math.exp(log_probability) if math.isfinite(log_probability) else 0.0
@@ -478,24 +814,31 @@ class LanguageModelCLI:
             width = order - 1
             prefix = [bos] * width + event["ids"][:event["position"]]
             context = tuple(prefix[-width:])
+            correct = prediction == event["target"]
+            sample_group = "correct" if correct else "incorrect"
+            if context in used_contexts[sample_group]:
+                return
             record = {
                 "index": row_index,
                 "key": event_key,
+                "context_key": context,
                 "context": " ".join(vocab[token] for token in context),
                 "expected": vocab[event["target"]],
                 "prediction_text": vocab[prediction] if prediction is not None else "<unseen>",
                 "expected_probability": probability,
                 "prediction_probability": ngram_info["lm"].prediction_probability(context),
-                "correct": prediction == event["target"],
+                "correct": correct,
             }
             samples = correct_samples if record["correct"] else incorrect_samples
             heap = correct_heap if record["correct"] else incorrect_heap
             if limit == 0:
                 samples[row_index] = record
+                used_contexts[sample_group][context] = row_index
                 selected_by_event[event_key] = record
             elif len(heap) < limit:
                 heapq.heappush(heap, (record["prediction_probability"], -row_index, row_index, record))
                 samples[row_index] = record
+                used_contexts[sample_group][context] = row_index
                 selected_by_event[event_key] = record
             elif (record["prediction_probability"], -row_index) > heap[0][:2]:
                 removed = heapq.heapreplace(
@@ -503,8 +846,10 @@ class LanguageModelCLI:
                     (record["prediction_probability"], -row_index, row_index, record),
                 )
                 samples.pop(removed[2], None)
+                used_contexts[sample_group].pop(removed[3]["context_key"], None)
                 selected_by_event.pop(removed[3]["key"], None)
                 samples[row_index] = record
+                used_contexts[sample_group][context] = row_index
                 selected_by_event[event_key] = record
 
         ng_result = nn_result = None
@@ -538,9 +883,10 @@ class LanguageModelCLI:
         print(f"  Sentences: {sentence_count:,}")
         print(f"  Word tokens: {words_count:,}")
         print(
-            f"  Prediction events: {total:,} "
+            f"  Perplexity events: {total:,} "
             f"({words_count:,} word targets + {sentence_count:,} sentence-ending targets)"
         )
+        print(f"  Sentence-ending targets excluded from word prediction metrics: {sentence_count:,}")
         print(
             f"  OOV word tokens: {oov:,}/{words_count:,} ({oov / words_count:.2%})"
             if words_count else "  OOV word tokens: 0"
@@ -556,36 +902,50 @@ class LanguageModelCLI:
             return result["status"]
 
         if ngram_info:
-            accuracy = ng_correct / total if total else math.nan
+            ng_word_result = ng_result["word_metrics"]
+            accuracy = ng_word_result["accuracy"]
             seen_accuracy = math.nan
-            if ng_covered:
-                seen_accuracy = ng_result["correct_when_context_seen"] / ng_covered
+            if ng_word_result["context_covered"]:
+                seen_accuracy = (
+                    ng_word_result["correct_when_context_seen"]
+                    / ng_word_result["context_covered"]
+                )
             context_coverage = (
-                f"{ng_covered:,} / {total:,} ({ng_covered / total:.4%})" if total else "n/a"
+                f"{ng_word_result['context_covered']:,} / {words_count:,} "
+                f"({ng_word_result['context_covered'] / words_count:.4%})" if words_count else "n/a"
+            )
+            word_correct_text = (
+                f"{ng_word_result['correct']:,} / {words_count:,} ({accuracy:.2%})"
+                if accuracy is not None else "n/a (no word targets)"
             )
             model_results.append((
                 f"{ngram_info['name']} ({order}-gram, {smoothing_desc})",
                 [
-                    ("Correct predictions", f"{ng_correct:,} / {total:,} ({accuracy:.2%})"),
-                    ("Top-1 accuracy (all)", f"{accuracy:.2%}"),
-                    ("Top-1 when context seen", f"{seen_accuracy:.2%}" if ng_covered else "n/a"),
+                    ("Correct word predictions", word_correct_text),
+                    ("Top-1 accuracy (word targets)", f"{accuracy:.2%}" if accuracy is not None else "n/a"),
+                    ("Top-1 when word context seen", f"{seen_accuracy:.2%}" if ng_word_result["context_covered"] else "n/a"),
                     ("Contexts seen in training", context_coverage),
-                    ("Zero-probability targets", f"{ng_zero:,} / {total:,} ({ng_zero / total:.2%})" if total else "n/a"),
-                    ("Perplexity", perplexity_text(ng_result)),
+                    ("Zero-probability events (incl. </s>)", f"{ng_zero:,} / {total:,} ({ng_zero / total:.2%})" if total else "n/a"),
+                    ("Perplexity (incl. </s>)", perplexity_text(ng_result)),
                 ] if total else [("Evaluation", "No events")],
             ))
         if neural_info:
-            accuracy = nn_correct / total if total else math.nan
+            nn_word_result = nn_result["word_metrics"]
+            accuracy = nn_word_result["accuracy"]
             nn_zero = nn_result["zero_probability_events"]
+            word_correct_text = (
+                f"{nn_word_result['correct']:,} / {words_count:,} ({accuracy:.2%})"
+                if accuracy is not None else "n/a (no word targets)"
+            )
             model_results.append((
                 f"{neural_info['name']} ({neural_info['checkpoint'].name})",
                 [
-                    ("Correct predictions", f"{nn_correct:,} / {total:,} ({accuracy:.2%})"),
-                    ("Top-1 accuracy (all)", f"{accuracy:.2%}"),
+                    ("Correct word predictions", word_correct_text),
+                    ("Top-1 accuracy (word targets)", f"{accuracy:.2%}" if accuracy is not None else "n/a"),
                     ("Top-1 when context seen", "n/a (neural model)"),
                     ("Contexts seen in training", "n/a (neural model)"),
-                    ("Zero-probability targets", f"{nn_zero:,} / {total:,} ({nn_zero / total:.2%})"),
-                    ("Perplexity", perplexity_text(nn_result)),
+                    ("Zero-probability events (incl. </s>)", f"{nn_zero:,} / {total:,} ({nn_zero / total:.2%})"),
+                    ("Perplexity (incl. </s>)", perplexity_text(nn_result)),
                 ] if total else [("Evaluation", "No events")],
             ))
 
@@ -601,14 +961,10 @@ class LanguageModelCLI:
                 print(f"| {label:<{metric_width}} | {value:<{value_width}} |")
             print(border)
 
-        print("\nTop-1 means the model's most likely next token matched the expected token.")
-        print("Context coverage counts events whose n-gram context appeared in training.")
+        print("\nTop-1 accuracy and context coverage use word targets only; sentence-ending targets are excluded.")
+        print("Perplexity and zero-probability counts include sentence-ending targets (</s>).")
         if ngram_info and ng_zero and ngram_info["smoothing"] == "mle":
             print("An unsmoothed n-gram assigns zero probability to some targets, making perplexity infinite.")
-        print(
-            "Each sentence-ending target is </s>: it scores the model's probability of ending "
-            "the sentence after its final word."
-        )
         if ngram_info:
             columns = ["Context", "Expected", "N-gram prediction", "P(expected)", "P(prediction)"]
             if neural_info:
@@ -621,7 +977,7 @@ class LanguageModelCLI:
                     samples.values(),
                     key=lambda row: (-row["prediction_probability"], row["index"]),
                 )
-                shown = "all" if limit == 0 else f"top {limit}"
+                shown = "all unique contexts" if limit == 0 else f"top {limit} unique contexts"
                 print(f"\n{title} ({shown}, ranked by P(prediction))")
                 if not ranked:
                     print("(no examples)")
@@ -664,11 +1020,108 @@ class LanguageModelCLI:
         print("  ngram NAME --n N --train TRAIN.txt [--min-freq N] [--smoothing mle|laplace|backoff]")
         print("       Laplace requires --k; backoff accepts --discount (default 0.75).")
         print("  ngram NAME --evaluate FILE.txt [--limit N] [--print-progress SECONDS]")
-        print("       Shows up to 25 correct and incorrect n-gram predictions, ranked by P(prediction); --limit 0 shows all.")
-        print("  compare --one ngram NAME --two neural CHECKPOINT --test FILE.txt [--limit N] [--print-progress SECONDS]")
+        print("       Shows up to 25 unique correct and incorrect contexts, ranked by P(prediction); --limit 0 shows all unique contexts.")
+        print("  compare --one ngram NAME --two ngram|neural NAME (--test FILE.txt | --csv RARE.csv) [--limit N] [--n N]")
+        print("       Supports n-gram vs neural, or two same-order n-gram models (for example MLE vs Laplace).")
+        print("       --csv scores matching-order rows; --n caps CSV rows (default: all); --limit applies to --test examples.")
         print("  models | help | quit")
+        print("  Use Up/Down for command history and Tab for command, model, option, and path completion.")
+
+    def _setup_line_editing(self) -> None:
+        """Enable persistent history and tab completion when readline is available."""
+        if readline is None:
+            print("Line editing unavailable: this Python build has no readline support.")
+            return
+        self._history_path = Path.home() / ".bits_nlp_lm_history"
+        try:
+            readline.read_history_file(str(self._history_path))
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            print(f"Could not load command history: {exc}")
+        readline.set_history_length(1000)
+        readline.parse_and_bind("tab: complete")
+        readline.set_completer_delims(" \t\n")
+        readline.set_completer(self._complete)
+        if hasattr(readline, "set_auto_history"):
+            readline.set_auto_history(True)
+        atexit.register(self._save_line_history)
+
+    def _save_line_history(self) -> None:
+        if readline is None or not hasattr(self, "_history_path"):
+            return
+        try:
+            readline.write_history_file(str(self._history_path))
+        except OSError as exc:
+            print(f"Could not save command history: {exc}")
+
+    @staticmethod
+    def _path_completions(prefix: str) -> list[str]:
+        expanded = os.path.expanduser(prefix)
+        matches = []
+        for match in glob.glob(expanded + "*"):
+            is_directory = os.path.isdir(match)
+            if prefix.startswith("~"):
+                home = str(Path.home())
+                if match.startswith(home):
+                    match = "~" + match[len(home):]
+            if is_directory:
+                match += os.sep
+            matches.append(match.replace(" ", "\\ "))
+        return matches
+
+    def _complete(self, text: str, state: int):
+        if state == 0:
+            line = readline.get_line_buffer()
+            before = line[:readline.get_begidx()]
+            try:
+                tokens = shlex.split(before)
+            except ValueError:
+                tokens = before.split()
+
+            commands = ["nn", "vocab", "stats", "predict", "ngram", "compare", "models", "help", "quit"]
+            options = ["--n", "--train", "--evaluate", "--min-freq", "--smoothing", "--k", "--discount", "--limit", "--print-progress", "--one", "--two", "--test", "--csv"]
+            if not tokens:
+                choices = commands
+            elif tokens[0] == "nn" and len(tokens) == 1:
+                choices = ["load"]
+            elif tokens[0] == "nn" and len(tokens) >= 2 and tokens[1] == "load":
+                choices = self._path_completions(text)
+            elif tokens[0] == "ngram" and tokens[-1] in {"--train", "--evaluate"}:
+                choices = self._path_completions(text)
+            elif tokens[0] == "ngram" and tokens[-1] == "--smoothing":
+                choices = ["mle", "laplace", "backoff"]
+            elif tokens[0] == "ngram" and text.startswith("-"):
+                choices = options[:9]
+            elif tokens[0] == "ngram" and len(tokens) >= 2 and not text:
+                choices = options[:9]
+            elif tokens[0] == "compare" and tokens[-1] in {"--test", "--csv"}:
+                choices = self._path_completions(text)
+            elif tokens[0] == "compare" and tokens[-1] in {"--one", "--two"}:
+                choices = ["ngram", "neural"]
+            elif (
+                tokens[0] == "compare" and len(tokens) >= 2
+                and tokens[-2] in {"--one", "--two"} and tokens[-1] in {"ngram", "neural"}
+            ):
+                choices = (
+                    list(self.ngrams)
+                    if tokens[-1] == "ngram"
+                    else [Path(key).name for key in self.neural] + self._path_completions(text)
+                )
+            elif tokens[0] == "compare" and text.startswith("-"):
+                choices = options
+            elif tokens and tokens[-1] in {"--train", "--test", "--csv", "--evaluate"}:
+                choices = self._path_completions(text)
+            else:
+                choices = []
+            self._completion_options = [choice for choice in choices if choice.startswith(text)]
+        try:
+            return self._completion_options[state]
+        except IndexError:
+            return None
 
     def shell(self):
+        self._setup_line_editing()
         print(f"Ready on {self.device}; no models loaded.")
         self.help()
         while True:
@@ -726,10 +1179,17 @@ class LanguageModelCLI:
                     parser = argparse.ArgumentParser(prog="compare", add_help=False)
                     parser.add_argument("--one", nargs=2, required=True, metavar=("TYPE", "NAME"))
                     parser.add_argument("--two", nargs=2, required=True, metavar=("TYPE", "NAME"))
-                    parser.add_argument("--test", type=Path, required=True)
+                    input_group = parser.add_mutually_exclusive_group(required=True)
+                    input_group.add_argument("--test", type=Path)
+                    input_group.add_argument("--csv", type=Path, help="rare n-gram CSV from analyze_rare_ngrams.py")
                     parser.add_argument("--limit", type=int, default=25)
+                    parser.add_argument("--n", type=int, help="maximum matching CSV entries to score; default is all")
                     parser.add_argument("--print-progress", type=float, default=10.0)
                     a = parser.parse_args(args[1:])
+                    if a.n is not None and a.n < 1:
+                        raise ValueError("--n must be a positive number of CSV entries")
+                    if a.n is not None and a.csv is None:
+                        raise ValueError("--n applies only when comparing a --csv file")
                     models = []
                     for kind, name in (a.one, a.two):
                         if kind.lower() == "ngram":
@@ -740,11 +1200,30 @@ class LanguageModelCLI:
                             models.append(self.resolve_neural(name))
                         else:
                             raise ValueError("model types are ngram or neural")
-                    ng = next((m for m in models if "order" in m), None)
-                    nn_info = next((m for m in models if "checkpoint" in m), None)
-                    if len(models) != 2 or ng is None or nn_info is None:
-                        raise ValueError("compare currently requires one ngram and one neural model")
-                    self.evaluate(a.test, ng, nn_info, a.limit, a.print_progress)
+                    if len(models) != 2:
+                        raise ValueError("compare requires exactly two models")
+                    first, second = models
+                    first_is_ngram = "order" in first
+                    second_is_ngram = "order" in second
+                    first_is_neural = "checkpoint" in first
+                    second_is_neural = "checkpoint" in second
+                    if first_is_ngram and second_is_ngram:
+                        if a.csv:
+                            self.compare_ngram_csv(a.csv, first, second, a.n)
+                        else:
+                            self.compare_ngram_models(a.test, first, second, a.limit, a.print_progress)
+                    elif first_is_ngram and second_is_neural:
+                        if a.csv:
+                            self.compare_csv(a.csv, first, second, a.n)
+                        else:
+                            self.evaluate(a.test, first, second, a.limit, a.print_progress)
+                    elif first_is_neural and second_is_ngram:
+                        if a.csv:
+                            self.compare_csv(a.csv, second, first, a.n)
+                        else:
+                            self.evaluate(a.test, second, first, a.limit, a.print_progress)
+                    else:
+                        raise ValueError("compare supports one n-gram and one neural model, or two n-gram models")
                 else:
                     print("Unknown command; enter help for usage.")
             except SystemExit:

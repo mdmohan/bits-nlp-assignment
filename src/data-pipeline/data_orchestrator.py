@@ -185,7 +185,8 @@ def run(args: argparse.Namespace) -> int:
     seed = args.seed if args.seed is not None else configured_seed
     use_cached = bool(data.get("use_cached", True))
     clean = bool(data.get("clean", False))
-    rare_check = bool(data.get("rare-check", data.get("rare_check", False)))
+    configured_rare_check = bool(data.get("rare-check", data.get("rare_check", False)))
+    rare_check = configured_rare_check if args.rare_check is None else args.rare_check
     verbose = bool(args.verbose or data.get("verbose", False))
     raw_root = Path(data.get("input", "data/raw")).expanduser()
     output_root = Path(data.get("output", "data/processed")).expanduser()
@@ -314,6 +315,10 @@ def main() -> int:
     parser.add_argument("--config", type=Path, required=True, help="Model/data YAML with a top-level data: section.")
     parser.add_argument("--manifest", type=Path, default=None, help="Override the registry path; otherwise use data.manifest or src/data-pipeline/data.yaml.")
     parser.add_argument("--seed", "--split-seed", type=int, default=None, help="Override the configured split_seed for this run.")
+    rare_group = parser.add_mutually_exclusive_group()
+    rare_group.add_argument("--rare-check", dest="rare_check", action="store_true", help="Run rare n-gram analysis even if disabled in the config.")
+    rare_group.add_argument("--no-rare-check", dest="rare_check", action="store_false", help="Skip rare n-gram analysis for this run.")
+    parser.set_defaults(rare_check=None)
     parser.add_argument("--verbose", action="store_true", help="Show per-document processing and split samples.")
     args = parser.parse_args()
     try:

@@ -122,6 +122,7 @@ def evaluate_model(model, vocab, sentences, family, device=None, batch_size=32,
                    max_padded_tokens=2048, allowed_target_ids="vocab", event_sink=None,
                    mapped_reference=None, current_original=None, fixed_original=None, case_limit=10):
     totals = _totals()
+    word_totals = _totals()
     groups = {}
     word_tokens = oov_tokens = sentence_count = 0
     cases = []
@@ -136,6 +137,7 @@ def evaluate_model(model, vocab, sentences, family, device=None, batch_size=32,
         sentence_count += int(event["eos"])
         is_oov = False
         if not event["eos"]:
+            _add(word_totals, event)
             word_tokens += 1
             is_oov = event["words"][event["position"]] not in vocab
             oov_tokens += int(is_oov)
@@ -180,7 +182,7 @@ def evaluate_model(model, vocab, sentences, family, device=None, batch_size=32,
             _add(groups.setdefault(label, _totals()), event)
         if event_sink is not None:
             event_sink(event)
-        if len(cases) < case_limit:
+        if not event["eos"] and len(cases) < case_limit:
             prediction = None
             if event["prediction"] is not None:
                 prediction = vocab.itos[event["prediction"]]
@@ -198,7 +200,21 @@ def evaluate_model(model, vocab, sentences, family, device=None, batch_size=32,
                           "mapped_trigram_count": event.get("mapped_trigram_count"),
                           "mapped_context_count": event.get("mapped_context_count")})
     result = _finish(totals)
+    all_event_metrics = result.copy()
+    word_metrics = _finish(word_totals)
+    # Keep sentence-level likelihood metrics over all targets, including </s>,
+    # while making the canonical prediction metrics word-target-only.
+    result.update(
+        accuracy=word_metrics["accuracy"],
+        correct=word_metrics["correct"],
+        context_covered=word_metrics["context_covered"],
+        correct_when_context_seen=word_metrics["correct_when_context_seen"],
+        all_event_accuracy=all_event_metrics["accuracy"],
+        all_event_correct=all_event_metrics["correct"],
+        all_event_context_covered=all_event_metrics["context_covered"],
+    )
     result.update(sentences=sentence_count, word_tokens=word_tokens, oov_tokens=oov_tokens,
+                  sentence_end_targets=sentence_count, word_metrics=word_metrics,
                   oov_rate=0.0, groups={name: _finish(values) for name, values in groups.items()}, cases=cases)
     if word_tokens:
         result["oov_rate"] = oov_tokens / word_tokens

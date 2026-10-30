@@ -448,18 +448,19 @@ def run(args: argparse.Namespace) -> int:
             f"Rare n-gram analysis: train={display_path(rare_train)}, "
             f"held-out files={len(rare_tests)}",
         )
-        run_stage(
-            [
-                sys.executable,
-                str(SRC_DIR / "analyze_rare_ngrams.py"),
-                "--train",
-                str(rare_train),
-                "--test",
-                *(str(path) for path in rare_tests),
-                "--csv",
-                str(corpus_output / "rare-ngrams.csv"),
-            ]
-        )
+        for order in (2, 3):
+            run_stage(
+                [
+                    sys.executable,
+                    str(SRC_DIR / "analyze_rare_ngrams.py"),
+                    "--train",
+                    str(rare_train),
+                    "--test",
+                    *(str(path) for path in rare_tests),
+                    "--n",
+                    str(order),
+                ]
+            )
 
     log_event("ok", f"Pipeline outputs: {display_path(corpus_output)}")
     log_event("ok", f"Pipeline finished in {time.perf_counter() - pipeline_started_at:.1f}s")

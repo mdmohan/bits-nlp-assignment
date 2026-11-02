@@ -118,6 +118,42 @@ python src/run.py src/configs/brown.yaml --algorithm ffnn --context-size 1 --tok
 python src/run.py src/configs/brown.yaml --algorithm ffnn --context-size 1 --token wp --resume
 ```
 
+For a full corpus sweep, use the mega-run manifest. It lists corpus experiment
+configs and the training percentages to run:
+
+```yaml
+run:
+  - inaugural.yaml
+train_percentages: [20, 40, 60, 80, 100]
+```
+
+Run it from the repository root:
+
+```sh
+python src/run.py --full src/configs/mega-run.yaml
+python src/run.py --full src/configs/mega-run.yaml --parallelism 2
+```
+
+For a smaller end-to-end check, `mega-smoke.yaml` uses Inaugural at 20% and 40%:
+
+```sh
+python src/run.py --full mega-smoke.yaml
+```
+
+For each corpus, the full runner prepares or reuses the configured corpus data,
+trains every configured model and seed at each percentage, runs
+`src/model_comparison.py`, and checks for the expected model and report files
+before advancing. `--parallelism` runs separate corpus pipelines concurrently;
+it defaults to `1`.
+
+Models and the exact training snapshots are stored under
+`results/<config name>/train_<percent>pct/`. Comparison artifacts are grouped
+with them under `results/<config name>/metrics/`: aggregate `metrics.csv`,
+prediction CSVs, `charts.png` for trends across percentages, and one
+`plot_<percent>p.png` per percentage. Each fixed-percentage plot compares
+accuracy and perplexity across models and train, validation, test, and rare
+examples. See the [source guide](src/README.md#full-corpus-run) for details.
+
 To compare tokenizer token/type counts before a run, use:
 
 ```sh

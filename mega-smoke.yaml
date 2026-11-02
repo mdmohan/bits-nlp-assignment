@@ -1,0 +1,3 @@
+run:
+  - inaugural.yaml
+train_percentages: [20,40]

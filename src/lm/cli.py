@@ -559,16 +559,25 @@ class LanguageModelCLI:
         model.load_state_dict(torch.load(path, map_location=self.device, weights_only=True))
         model.to(self.device).eval()
         data = config.get("data", {})
-        train_path = Path(data.get("output", "data/processed")) / data.get("corpus", "") / "train.txt"
-        if not train_path.is_absolute():
-            train_path = Path(__file__).resolve().parents[2] / train_path
+        source_train_path = Path(data.get("output", "data/processed")) / data.get("corpus", "") / "train.txt"
+        if not source_train_path.is_absolute():
+            source_train_path = Path(__file__).resolve().parents[2] / source_train_path
+        # Percentage-specific runs keep the exact lines consumed by training
+        # beside their artifacts, so downstream count models can reuse them.
+        snapshot_path = next(
+            (parent / "train.txt" for parent in path.parents if (parent / "train.txt").is_file()),
+            None,
+        )
+        train_path = snapshot_path or source_train_path
+        train_percent = float(config.get("train_percent", 100))
         info = {
             "name": name, "model": model, "checkpoint": path, "vocab": vocab, "stoi": stoi,
             "run_dir": path.parent,
             "lowercase": data.get("lowercase", True),
             "tokenizer": canonical_tokenizer_name(data.get("tokenizer", "space")),
             "train_path": train_path.resolve(),
-            "train_percent": float(config.get("train_percent", 100)),
+            "train_percent": train_percent,
+            "train_file_percent": 100.0 if snapshot_path else train_percent,
         }
         if "allowed_target_ids" in config:
             info["allowed_target_ids"] = config["allowed_target_ids"]
@@ -659,7 +668,10 @@ class LanguageModelCLI:
             else nn_tokenizer
         )
         lowercase = nn_info["lowercase"] if nn_info else True
-        train_percent = nn_info["train_percent"] if nn_info else 100
+        train_percent = (
+            nn_info.get("train_file_percent", nn_info["train_percent"])
+            if nn_info else 100
+        )
         use_neural_vocab = nn_info is not None and nn_tokenizer == tokenizer_name
         if use_neural_vocab:
             vocab = nn_info["vocab"]

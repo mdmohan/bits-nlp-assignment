@@ -65,13 +65,19 @@ python src/run.py src/configs/blog-posts.yaml
 python src/run.py src/configs/blog-posts.yaml --resume
 ```
 
-The latest resumable state lives under `results/<run name>/checkpoints/`. It
-contains model and optimizer state, completed epoch, validation-selection state,
-training history and random-number-generator state. A restart resumes at the next
-epoch; if a process stops mid-epoch, that incomplete epoch is repeated. Checkpoint
-files are atomically replaced at epoch boundaries and removed after final model and
-result artifacts are written. A completed result is reused by `--resume` when its
-configuration and input fingerprints still match.
+Each percentage-specific run also writes its exact selected training sentences to
+`results/<run name>/train_<percent>pct/train.txt`. The comparison notebook and
+CLI n-gram builder can use this snapshot directly, without applying the percentage
+cutoff again or depending on later changes to the processed corpus file.
+
+The latest resumable state lives under
+`results/<run name>/train_<percent>pct/checkpoints/`. It contains model and optimizer
+state, completed epoch, validation-selection state, training history and
+random-number-generator state. A restart resumes at the next epoch; if a process
+stops mid-epoch, that incomplete epoch is repeated. Checkpoint files are atomically
+replaced at epoch boundaries and removed after final model and result artifacts are
+written. A completed result is reused by `--resume` when its configuration and input
+fingerprints still match.
 
 ## Suite Lifecycle
 

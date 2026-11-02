@@ -9,6 +9,7 @@ batches, so their perplexities are directly comparable.
 
 import json
 import hashlib
+import os
 import subprocess
 import sys
 import time
@@ -21,7 +22,7 @@ import yaml
 from .data import Corpus, Vocab, load_corpus_files, make_loader
 from .neural import build_model, count_parameters
 from .neural.trainer import Trainer, TrainConfig, get_device, set_seed
-from .tokenization import canonical_tokenizer_name
+from .tokenization import canonical_tokenizer_name, get_tokenizer
 
 
 class LanguageModelController:
@@ -57,6 +58,40 @@ class LanguageModelController:
             for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
                 digest.update(block)
         return digest.hexdigest()
+
+    @staticmethod
+    def _write_training_subset(
+        source_path: Path,
+        destination: Path,
+        sentence_count: int,
+        tokenizer_name: str,
+    ) -> None:
+        """Save the exact nonempty source lines consumed by the neural training run."""
+        tokenizer = get_tokenizer(tokenizer_name)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_name(destination.name + ".tmp")
+        copied = 0
+        try:
+            with source_path.open("rb") as source, temporary.open("wb") as target:
+                for raw_line in source:
+                    line = raw_line.decode("utf-8")
+                    if not line.strip() or not tokenizer.tokenize(line):
+                        continue
+                    target.write(raw_line)
+                    copied += 1
+                    if copied == sentence_count:
+                        break
+                target.flush()
+                os.fsync(target.fileno())
+            if copied != sentence_count:
+                raise ValueError(
+                    f"Training subset mismatch: expected {sentence_count:,} sentences, "
+                    f"copied {copied:,} from {source_path}"
+                )
+            temporary.replace(destination)
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
 
     @staticmethod
     def _write_json_atomic(path: Path, value: dict) -> None:
@@ -171,6 +206,7 @@ def run_from_config(
     context_size_override: int | None = None,
     tokenizer_override: str | None = None,
     resume: bool = False,
+    prepare_data: bool = True,
 ) -> pd.DataFrame:
     """Run configured models/seeds, with optional algorithm, seed and FFNN context overrides."""
     if not 0 < train_percent <= 100:
@@ -237,11 +273,16 @@ def run_from_config(
     config["models"] = selected_models
     config["seeds"] = selected_seeds
     output_name = config["name"]
+    output_dir = (
+        Path(config.get("output_dir", "results"))
+        / output_name
+        / f"train_{train_percent:g}pct"
+    )
     if context_size_override is not None:
         output_name = f"{output_name}_ffnn_ctx{context_size_override}"
         config["context_size_override"] = context_size_override
         config["context_sizes"] = [context_size_override]
-    output_dir = Path(config.get("output_dir", "results")) / output_name
+        output_dir = output_dir / f"ffnn_ctx{context_size_override}"
 
     data_config = config["data"]
     if not isinstance(data_config, dict):
@@ -270,14 +311,17 @@ def run_from_config(
 
     project_root = Path(__file__).resolve().parents[2]
     pipeline = project_root / "src" / "data-pipeline" / "data_orchestrator.py"
-    try:
-        subprocess.run(
-            [sys.executable, str(pipeline), "--config", str(config_path), "--token", tokenizer_name],
-            cwd=project_root,
-            check=True,
-        )
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(f"Data preparation failed (exit code {exc.returncode}).") from exc
+    if prepare_data:
+        try:
+            subprocess.run(
+                [sys.executable, str(pipeline), "--config", str(config_path), "--token", tokenizer_name],
+                cwd=project_root,
+                check=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(f"Data preparation failed (exit code {exc.returncode}).") from exc
+    else:
+        print("Skipping data preparation; using the already prepared corpus splits.", flush=True)
 
     processed_root = Path(data_config.get("output", "data/processed")).expanduser()
     if not processed_root.is_absolute():
@@ -303,6 +347,18 @@ def run_from_config(
     )
     controller.data_stats["train_percent"] = train_percent
     config["train_percent"] = train_percent
+    training_snapshot = output_dir / "train.txt"
+    controller._write_training_subset(
+        corpus_dir / "train.txt",
+        training_snapshot,
+        len(corpus.train),
+        tokenizer_name,
+    )
+    print(
+        f"Saved exact training subset: {training_snapshot} "
+        f"({len(corpus.train):,} sentences; {train_percent:g}%)",
+        flush=True,
+    )
     train_config = TrainConfig(**training)
     split_paths = {
         "train": corpus_dir / "train.txt",

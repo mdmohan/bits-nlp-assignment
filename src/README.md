@@ -55,7 +55,9 @@ From the `src` directory:
 ```
 
 This trains every model listed in the config for every seed, prints per-epoch progress, and
-writes results to `results/<name>/`.
+writes results to `results/<name>/train_<percent>pct/` (for example,
+`results/brown_press_neural/train_100pct/`). Each training percentage has its own
+folder, so repeated runs do not overwrite each other's checkpoints or metrics.
 
 Run one configured algorithm with `--algorithm` (or its alias `--model`). Override the configured
 seed list with `--seed`; when used alone, the seed override still runs every configured algorithm:
@@ -79,7 +81,7 @@ python -u run.py configs/brown.yaml --algorithm ffnn --context-size 4 --seed 13
 ```
 
 Context size `1` gives a bigram-style neural context; `2` gives a trigram-style context.
-Each override writes to its own `results/<name>_ffnn_ctx<N>/` experiment folder. Within the
+Each override writes under `results/<name>/train_<percent>pct/ffnn_ctx<N>/`. Within the
 experiment, every configured model variant has its own `models/<variant>/` folder, and its
 context size is recorded in `runs.csv`, `summary.csv`, and the saved config. The option applies
 to FFNN only.
@@ -93,7 +95,7 @@ context_sizes: [1, 2, 4]
 ```
 
 Each configured FFNN is trained once per context size and seed; other configured models run
-once per seed. Each variant gets a separate folder under `results/<name>/models/`, preventing
+once per seed. Each variant gets a separate folder under `results/<name>/train_<percent>pct/models/`, preventing
 duplicate algorithm entries from overwriting checkpoints or histories. The run table reports
 the variant and context size. `--context-size N` still overrides the list for a one-context run.
 
@@ -105,7 +107,31 @@ python -u run.py configs/brown.yaml --train-percent 10
 ```
 
 The default is `100`, which uses all training sentences. The chosen percentage is recorded in
-the output config, data statistics, and run table.
+the output config, data statistics, and run table. Each percentage is saved in its matching
+`train_<percent>pct/` results subfolder.
+
+### Full corpus run
+
+Use a mega-run manifest to prepare each corpus once, train every configured model and seed at
+each listed percentage, compare the saved runs, and verify the expected artifacts before
+moving to the next corpus. The default manifest is `configs/mega-run.yaml`:
+
+```sh
+python -u run.py --full configs/mega-run.yaml
+python -u run.py --full configs/mega-run.yaml --parallelism 2
+```
+
+The manifest's `run` list names corpus configs and `train_percentages` selects the training
+fractions. If `train_percentages` is omitted, the runner uses 20, 40, 60, 80, and 100 percent.
+`--parallelism` defaults to `1`; higher values run independent corpus pipelines in separate
+processes.
+
+Each run keeps model artifacts and its exact training snapshot under
+`results/<config name>/train_<percent>pct/`. The comparison writes to
+`results/<config name>/metrics/`: `metrics.csv`, `perplexity_by_percentage.csv`, prediction
+CSVs, `charts.png` for trends by percentage, and a fixed-percentage `plot_<percent>p.png` for
+each run. Fixed-percentage plots show accuracy and perplexity across models for train, valid,
+test, and rare examples.
 
 ### Inspecting a saved run
 
@@ -139,17 +165,17 @@ per section; `--limit 0` prints every event.
 To compare against a neural checkpoint, load it and compare both models on the same test file:
 
 ```text
-lm> nn load src/results/brown_press_neural/models/ffnn_ctx3/ffnn_seed13.pt
+lm> nn load results/brown_press_neural/train_100pct/models/ffnn_ctx1/ffnn_seed13.pt
 lm> vocab 10
 lm> predict the cat
-lm> ngram brown_bigram --n 2 --train data/processed/brown/train.txt
+lm> ngram brown_bigram --n 2 --train results/brown_press_neural/train_100pct/train.txt
 lm> compare --one ngram brown_bigram --two neural ffnn_seed13.pt --test data/processed/brown/test.txt
 lm> quit
 ```
 
-When the n-gram is created from the neural model's exact training file, the CLI uses the
-checkpoint's saved vocabulary, lowercasing rule, and training percentage. Otherwise it builds
-a vocabulary from the supplied training text (`--min-freq 2` by default). N-gram models are
+When the n-gram is created from the neural model's saved `train.txt`, the CLI uses the
+checkpoint's saved vocabulary and lowercasing rule, and reads the snapshot in full. Otherwise
+it builds a vocabulary from the supplied training text (`--min-freq 2` by default). N-gram models are
 kept in memory for the current CLI session; recreate them after restarting the CLI. A zero
 probability event gives an unsmoothed model infinite perplexity.
 
@@ -247,19 +273,26 @@ The trainer and controller need no changes.
 
 ## Outputs
 
-`results/<name>/` contains aggregate run files and a `models/` folder with one subfolder per
-configured model variant. Each model folder contains its checkpoint(s), training history,
-config, vocabulary, and data statistics.
+`results/<name>/train_<percent>pct/` contains aggregate run files and a `models/` folder with
+one subfolder per configured model variant. Each model folder contains its checkpoint(s),
+training history, config, vocabulary, and data statistics. The exact selected training
+sentences are copied to `train.txt` in that percentage folder for matched n-gram comparisons.
+For example, the 20% and 40% runs are kept separately under `train_20pct/` and `train_40pct/`.
 
 | File | Content |
 |---|---|
 | `runs.csv` | One row per model variant x seed: parameters, vocab size, test OOV rate, valid/test perplexity, epochs, train and test time |
 | `summary.csv` | Mean and standard deviation per model variant across seeds |
+| `train.txt` | Exact nonempty sentence lines consumed by the neural run at this training percentage |
 | `models/<variant>/<model>_seed<seed>_history.csv` | Per-epoch train/valid perplexity and time |
 | `models/<variant>/<model>_seed<seed>.pt` | Best model weights (not committed to git; regenerate with `run.py`) |
 | `vocab.json` | Vocabulary list (index = word id) |
 | `data_stats.json` | Sentence/token counts per split, vocab size, OOV rates |
 | `config.yaml` | Copy of the config used |
+
+Full-run comparison files are stored separately in `results/<name>/metrics/`. The aggregate
+metrics retain train, valid, test, and rare scores; prediction-detail CSVs contain held-out
+valid/test and rare examples.
 
 ## Results: Brown press genres
 

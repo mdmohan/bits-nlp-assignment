@@ -8,6 +8,7 @@ batches, so their perplexities are directly comparable.
 """
 
 import json
+import hashlib
 import subprocess
 import sys
 import time
@@ -20,12 +21,15 @@ import yaml
 from .data import Corpus, Vocab, load_corpus_files, make_loader
 from .neural import build_model, count_parameters
 from .neural.trainer import Trainer, TrainConfig, get_device, set_seed
+from .tokenization import canonical_tokenizer_name
 
 
 class LanguageModelController:
     def __init__(self, corpus: Corpus, min_freq: int = 2, max_vocab: int | None = None,
-                 batch_size: int = 32, device: str = "auto", output_dir: str | None = None):
+                 batch_size: int = 32, device: str = "auto", output_dir: str | None = None,
+                 tokenizer_name: str = "space"):
         self.corpus = corpus
+        self.tokenizer_name = canonical_tokenizer_name(tokenizer_name)
         self.vocab = Vocab(corpus.train, min_freq=min_freq, max_size=max_vocab)
         self.device = get_device(device)
         self.output_dir = None
@@ -39,11 +43,67 @@ class LanguageModelController:
 
         self.data_stats = {
             **corpus.describe(),
+            "tokenizer": self.tokenizer_name,
             "vocab_size": len(self.vocab),
             "valid_oov_rate": self.vocab.oov_rate(corpus.valid),
             "test_oov_rate": self.vocab.oov_rate(corpus.test),
         }
         print("data:", json.dumps(self.data_stats, indent=2))
+
+    @staticmethod
+    def _file_sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+                digest.update(block)
+        return digest.hexdigest()
+
+    @staticmethod
+    def _write_json_atomic(path: Path, value: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(path.name + ".tmp")
+        try:
+            temporary.write_text(json.dumps(value, indent=2), encoding="utf-8")
+            with temporary.open("r+b") as stream:
+                import os
+                os.fsync(stream.fileno())
+            temporary.replace(path)
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
+
+    def _recover_completed_result(
+        self, model_name: str, model_params: dict, seed: int, final_model: Path,
+        history_path: Path,
+    ) -> dict:
+        """Rebuild metrics from a final weights-only checkpoint without retraining."""
+        model = build_model(model_name, len(self.vocab), self.vocab.pad_id, **model_params)
+        model.load_state_dict(
+            torch.load(final_model, map_location=self.device, weights_only=True)
+        )
+        trainer = Trainer(model, TrainConfig(), self.vocab.pad_id, self.device)
+        test_started = time.perf_counter()
+        test = trainer.evaluate(self.test_loader, "resume test evaluation")
+        test_seconds = time.perf_counter() - test_started
+        valid = trainer.evaluate(self.valid_loader, "resume validation evaluation")
+        history = pd.read_csv(history_path) if history_path.is_file() else pd.DataFrame()
+        train_seconds = float(history["seconds"].sum()) if "seconds" in history else 0.0
+        epochs_trained = int(len(history))
+        result = {
+            "model": model_name,
+            "seed": seed,
+            "parameters": count_parameters(model),
+            "vocab_size": len(self.vocab),
+            "test_oov_rate": self.data_stats["test_oov_rate"],
+            "valid_ppl": valid["perplexity"],
+            "test_ppl": test["perplexity"],
+            "test_tokens": test["tokens"],
+            "epochs_trained": epochs_trained,
+            "train_seconds": train_seconds,
+            "test_seconds": test_seconds,
+        }
+        print(f"  Reused completed weights: {final_model.name}", flush=True)
+        return result
 
     def run(
         self,
@@ -52,6 +112,10 @@ class LanguageModelController:
         train_config: TrainConfig,
         seed: int,
         artifact_dir: Path | None = None,
+        checkpoint_path: Path | None = None,
+        best_checkpoint_path: Path | None = None,
+        checkpoint_metadata: dict | None = None,
+        resume: bool = False,
     ) -> dict:
         """Train one model with one seed and evaluate it on the test set."""
         print(f"\n=== {model_name} | seed {seed} | device {self.device} ===")
@@ -60,7 +124,14 @@ class LanguageModelController:
         trainer = Trainer(model, train_config, self.vocab.pad_id, self.device)
 
         start = time.perf_counter()
-        history = trainer.fit(self.train_loader, self.valid_loader)
+        history = trainer.fit(
+            self.train_loader,
+            self.valid_loader,
+            checkpoint_path=checkpoint_path,
+            best_checkpoint_path=best_checkpoint_path,
+            checkpoint_metadata=checkpoint_metadata,
+            resume=resume,
+        )
         train_seconds = time.perf_counter() - start
 
         start = time.perf_counter()
@@ -98,6 +169,8 @@ def run_from_config(
     algorithm: str | None = None,
     seed_override: int | None = None,
     context_size_override: int | None = None,
+    tokenizer_override: str | None = None,
+    resume: bool = False,
 ) -> pd.DataFrame:
     """Run configured models/seeds, with optional algorithm, seed and FFNN context overrides."""
     if not 0 < train_percent <= 100:
@@ -171,6 +244,13 @@ def run_from_config(
     output_dir = Path(config.get("output_dir", "results")) / output_name
 
     data_config = config["data"]
+    if not isinstance(data_config, dict):
+        raise ValueError("The config must define a 'data' mapping.")
+    tokenizer_name = canonical_tokenizer_name(
+        tokenizer_override if tokenizer_override is not None
+        else data_config.get("tokenizer", "space")
+    )
+    data_config["tokenizer"] = tokenizer_name
     vocab_config = config.get("vocab", {})
     training = dict(config.get("training", {}))
     batch_size = training.pop("batch_size", 32)
@@ -192,7 +272,7 @@ def run_from_config(
     pipeline = project_root / "src" / "data-pipeline" / "data_orchestrator.py"
     try:
         subprocess.run(
-            [sys.executable, str(pipeline), "--config", str(config_path)],
+            [sys.executable, str(pipeline), "--config", str(config_path), "--token", tokenizer_name],
             cwd=project_root,
             check=True,
         )
@@ -208,6 +288,7 @@ def run_from_config(
         corpus_dir / "valid.txt",
         corpus_dir / "test.txt",
         train_percent=train_percent,
+        tokenizer_name=tokenizer_name,
     )
     if data_config.get("lowercase", True):
         corpus = corpus.lowercase()
@@ -218,10 +299,24 @@ def run_from_config(
         batch_size=batch_size,
         device=config.get("device", "auto"),
         output_dir=output_dir,
+        tokenizer_name=tokenizer_name,
     )
     controller.data_stats["train_percent"] = train_percent
     config["train_percent"] = train_percent
     train_config = TrainConfig(**training)
+    split_paths = {
+        "train": corpus_dir / "train.txt",
+        "valid": corpus_dir / "valid.txt",
+        "test": corpus_dir / "test.txt",
+    }
+    log_start = time.perf_counter()
+    split_fingerprints = {
+        name: controller._file_sha256(path) for name, path in split_paths.items()
+    }
+    print(
+        "Checkpoint input fingerprints ready "
+        f"({time.perf_counter() - log_start:.1f}s)", flush=True,
+    )
 
     model_labels = []
     for model in selected_models:
@@ -269,13 +364,90 @@ def run_from_config(
         (variant_dir / "vocab.json").write_text(json.dumps(controller.vocab.itos))
         (variant_dir / "data_stats.json").write_text(json.dumps(controller.data_stats, indent=2))
         for seed in selected_seeds:
-            result = controller.run(
-                model["name"], model.get("params", {}), train_config, seed,
-                artifact_dir=variant_dir,
+            model_name = str(model["name"])
+            run_name = f"{model_name}_seed{seed}"
+            final_model = variant_dir / f"{run_name}.pt"
+            history_path = variant_dir / f"{run_name}_history.csv"
+            result_path = variant_dir / f"{run_name}_result.json"
+            checkpoint_dir = output_dir / "checkpoints"
+            checkpoint_path = checkpoint_dir / f"{variant_label}_{run_name}.resume.pt"
+            best_checkpoint_path = checkpoint_dir / f"{variant_label}_{run_name}.best.pt"
+
+            selected_model_file = (
+                Path(__file__).parent / "neural" / model_name.lower() / "model.py"
             )
+            signature_payload = {
+                "model": model_name,
+                "model_params": model.get("params", {}),
+                "variant": variant_label,
+                "seed": seed,
+                "train_config": train_config.__dict__,
+                "batch_size": batch_size,
+                "train_percent": train_percent,
+                "tokenizer": tokenizer_name,
+                "lowercase": bool(data_config.get("lowercase", True)),
+                "corpus": data_config["corpus"],
+                "split_fingerprints": split_fingerprints,
+                "vocab_fingerprint": controller.vocab.fingerprint,
+                "device": str(controller.device),
+                "torch_version": torch.__version__,
+                "code_fingerprints": {
+                    "trainer": controller._file_sha256(Path(__file__).parent / "neural" / "trainer.py"),
+                    "data": controller._file_sha256(Path(__file__).parent / "data.py"),
+                    "tokenization": controller._file_sha256(Path(__file__).parent / "tokenization.py"),
+                    "model": controller._file_sha256(selected_model_file),
+                },
+            }
+            signature = hashlib.sha256(
+                json.dumps(signature_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            checkpoint_metadata = {"signature": signature}
+
+            if resume and result_path.is_file():
+                saved_result = json.loads(result_path.read_text(encoding="utf-8"))
+                if saved_result.get("signature") != signature:
+                    raise ValueError(
+                        f"Completed result settings do not match this run: {result_path}. "
+                        "Start a fresh run without --resume or restore the original config/data."
+                    )
+                result = saved_result["result"]
+                print(f"Skipping completed fit {variant_label}/{run_name}", flush=True)
+                checkpoint_path.unlink(missing_ok=True)
+                best_checkpoint_path.unlink(missing_ok=True)
+                for stale_best in best_checkpoint_path.parent.glob(
+                    f"{best_checkpoint_path.stem}.epoch-*.pt"
+                ):
+                    stale_best.unlink(missing_ok=True)
+            elif resume and final_model.is_file() and not checkpoint_path.is_file():
+                result = controller._recover_completed_result(
+                    model_name, model.get("params", {}), seed, final_model, history_path,
+                )
+            else:
+                if not resume:
+                    checkpoint_path.unlink(missing_ok=True)
+                    best_checkpoint_path.unlink(missing_ok=True)
+                result = controller.run(
+                    model_name, model.get("params", {}), train_config, seed,
+                    artifact_dir=variant_dir,
+                    checkpoint_path=checkpoint_path,
+                    best_checkpoint_path=best_checkpoint_path,
+                    checkpoint_metadata=checkpoint_metadata,
+                    resume=resume,
+                )
             if is_ffnn:
                 result["context_size"] = context_size
             result["variant"] = variant_label
+            result["train_percent"] = train_percent
+            controller._write_json_atomic(
+                result_path,
+                {"signature": signature, "signature_payload": signature_payload, "result": result},
+            )
+            checkpoint_path.unlink(missing_ok=True)
+            best_checkpoint_path.unlink(missing_ok=True)
+            for stale_best in best_checkpoint_path.parent.glob(
+                f"{best_checkpoint_path.stem}.epoch-*.pt"
+            ):
+                stale_best.unlink(missing_ok=True)
             results.append(result)
     for result in results:
         result["train_percent"] = train_percent

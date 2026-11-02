@@ -10,6 +10,8 @@ import torch
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset, Sampler
 
+from .tokenization import canonical_tokenizer_name, get_tokenizer
+
 PAD, UNK, BOS, EOS = "<pad>", "<unk>", "<s>", "</s>"
 
 Sentence = list[str]
@@ -48,17 +50,23 @@ def load_corpus_files(
     valid: str | Path,
     test: str | Path,
     train_percent: float = 100,
+    tokenizer_name: str = "space",
 ) -> Corpus:
-    """Read the split files, optionally using the first percentage of train sentences."""
+    """Read split files with one shared tokenizer, optionally limiting train sentences."""
     if not 0 < train_percent <= 100:
         raise ValueError("train_percent must be greater than 0 and at most 100")
+
+    tokenizer_name = canonical_tokenizer_name(tokenizer_name)
+    tokenizer = get_tokenizer(tokenizer_name)
 
     def read(path: str | Path, limit: int | None = None) -> list[Sentence]:
         with Path(path).open(encoding="utf-8") as handle:
             sentences = []
             for line in handle:
                 if line.strip():
-                    sentences.append(line.split())
+                    words = tokenizer.tokenize(line)
+                    if words:
+                        sentences.append(words)
                     if limit is not None and len(sentences) >= limit:
                         break
             return sentences
@@ -71,7 +79,7 @@ def load_corpus_files(
         train_limit = math.ceil(total_train * train_percent / 100)
         print(
             f"train subset: using first {train_percent:g}% "
-            f"({train_limit:,}/{total_train:,} sentences)"
+            f"({train_limit:,}/{total_train:,} sentences) | tokenizer={tokenizer_name}"
         )
 
     return Corpus(read(train_path, train_limit), read(valid), read(test))
@@ -219,7 +227,6 @@ class LengthBucketBatchSampler(Sampler[list[int]]):
 
     def __iter__(self):
         batches = self._batches()
-
         if self.shuffle:
             random.shuffle(batches)
             for batch in batches:

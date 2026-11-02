@@ -7,24 +7,28 @@ import argparse
 import csv
 import json
 import sqlite3
+import sys
 import tempfile
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from lm.tokenization import canonical_tokenizer_name, get_tokenizer, tokenizer_names
 from log_utils import display_path, log_event
 
 
 BOS = "<s>"
 EOS = "</s>"
 SPECIALS = {BOS, EOS}
-CSV_FIELDS = ["order", "sequence", "train_count", "test_count", "context_oov"]
+CSV_FIELDS = ["order", "sequence", "train_count", "test_count", "context_oov", "tokenizer"]
 
 
-def sentences(paths: list[Path]):
+def sentences(paths: list[Path], tokenizer_name: str):
+    tokenizer = get_tokenizer(tokenizer_name)
     for path in paths:
         with path.open("r", encoding="utf-8-sig", errors="replace") as handle:
             for line in handle:
-                words = line.strip().lower().split()
+                words = [word.lower() for word in tokenizer.tokenize(line)]
                 if words:
                     yield words
 
@@ -45,11 +49,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train", required=True, type=Path, help="Training sentences, one per line")
     parser.add_argument("--test", required=True, nargs="+", type=Path, help="Held-out sentence file(s)")
     parser.add_argument("--n", required=True, type=int, choices=(2, 3), help="N-gram order: 2 or 3")
+    parser.add_argument("--token", choices=tokenizer_names(), default="space", help="Tokenizer used for model input")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    args.token = canonical_tokenizer_name(args.token)
     train_path = args.train.expanduser().resolve()
     test_paths = [path.expanduser().resolve() for path in args.test]
     for path in [train_path, *test_paths]:
@@ -63,10 +69,10 @@ def main() -> int:
     sequence_path = output_dir / f"rare-seq-{label}.csv"
 
     started = time.perf_counter()
-    log_event("info", f"Analyzing {label}: train={display_path(train_path)}")
+    log_event("info", f"Analyzing {label}: tokenizer={args.token}, train={display_path(train_path)}")
     train_vocab: set[str] = set()
     train_sentences = 0
-    for words in sentences([train_path]):
+    for words in sentences([train_path], args.token):
         train_sentences += 1
         train_vocab.update(words)
     log_event("info", f"Training vocabulary: {len(train_vocab):,} words from {train_sentences:,} sentences")
@@ -84,7 +90,7 @@ def main() -> int:
         )
 
         batch: list[tuple[str]] = []
-        for sentence in sentences([train_path]):
+        for sentence in sentences([train_path], args.token):
             for gram, _ in padded_ngrams(sentence, args.n, train_vocab):
                 batch.append((json.dumps(gram, ensure_ascii=False, separators=(",", ":")),))
                 if len(batch) >= 50_000:
@@ -104,7 +110,7 @@ def main() -> int:
         batch_rows: list[tuple[str, str, int, int]] = []
         heldout_sentences = heldout_events = 0
         for test_path in test_paths:
-            for sentence in sentences([test_path]):
+            for sentence in sentences([test_path], args.token):
                 heldout_sentences += 1
                 for gram, context_oov in padded_ngrams(sentence, args.n, train_vocab):
                     key = json.dumps(gram, ensure_ascii=False, separators=(",", ":"))
@@ -144,6 +150,7 @@ def main() -> int:
                     "train_count": train_count,
                     "test_count": test_count,
                     "context_oov": bool(context_oov),
+                    "tokenizer": args.token,
                 }
                 if context_oov:
                     context_writer.writerow(row)

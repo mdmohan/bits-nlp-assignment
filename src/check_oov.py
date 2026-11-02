@@ -53,6 +53,7 @@ def validation_oov(config: dict) -> tuple[float, int, int, int]:
         split_dir / "train.txt",
         split_dir / "valid.txt",
         split_dir / "test.txt",
+        tokenizer_name=data.get("tokenizer", "space"),
     ).lowercase()
     vocab_config = config.get("vocab", {})
     vocab = Vocab(

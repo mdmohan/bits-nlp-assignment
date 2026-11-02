@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 import time
 import zipfile
 from pathlib import Path
 from urllib.parse import unquote, urlparse
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from data_download import (
     configured_extract_path,
@@ -22,6 +25,8 @@ from data_download import (
 )
 from database_integrity import database_files, verify_database_sha, write_database_sha
 from log_utils import display_path, log_event
+from lm.tokenization import canonical_tokenizer_name, tokenizer_names
+from sampling import normalize_sampling, sample_documents
 
 
 SRC_DIR = Path(__file__).resolve().parent
@@ -89,7 +94,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Ratios summing to 1: train test, or train valid test.",
     )
     parser.add_argument("--rare-check", action="store_true", help="Analyze rare bigrams/trigrams.")
+    parser.add_argument("--token", choices=tokenizer_names(), default="space", help="Tokenizer used by model and rare-check inputs.")
     parser.add_argument("--seed", type=int, default=42, help="Reproducible document-split seed.")
+    parser.add_argument("--sample-percent", type=float, help="Seeded percentage of source documents to sample before cleaning/loading.")
+    parser.add_argument("--sample-seed", type=int, help="Seed for reproducible source-document sampling.")
     parser.add_argument("--verbose", action="store_true", help="Show per-document and sample details.")
     parser.add_argument(
         "--remove-word",
@@ -230,12 +238,15 @@ def run(args: argparse.Namespace) -> int:
         raise ValueError("Choose --download, --clean, --load, --split, or --rare-check.")
     if (args.remove_word or args.remove_regex) and not args.clean:
         raise ValueError("--remove-word and --remove-regex require --clean.")
+    if (args.sample_percent is None) != (args.sample_seed is None):
+        raise ValueError("--sample-percent and --sample-seed must be provided together.")
     if args.download and not args.load and (split_requested or args.rare_check):
         raise ValueError("--download with --split or --rare-check requires --load in the same run.")
     if args.download and args.rare_check and not split_requested:
         raise ValueError("--download --rare-check requires --split so train/test files are created.")
 
     corpus = args.corpus.strip()
+    args.token = canonical_tokenizer_name(args.token)
     if not corpus or Path(corpus).name != corpus or corpus in {".", ".."}:
         raise ValueError("--corpus must be a simple folder name.")
     selected_stages = [
@@ -251,6 +262,7 @@ def run(args: argparse.Namespace) -> int:
     download_root = None
     input_path: Path | None = None
     local_archive_source = False
+    sampling_config = None
     if args.download:
         if input_arg is None:
             raise ValueError("--download requires --in to point to a data.yaml manifest.")
@@ -262,6 +274,17 @@ def run(args: argparse.Namespace) -> int:
         if not input_path.is_file():
             raise FileNotFoundError(f"--download expects a YAML file for --in, not: {display_path(input_path)}")
         manifest_entry = load_corpus_config(input_path, corpus)
+        sampling_config = normalize_sampling(manifest_entry.get("sampling"))
+        command_sampling = (
+            normalize_sampling({
+                "sample-percent": args.sample_percent,
+                "sample-seed": args.sample_seed,
+            })
+            if args.sample_percent is not None else None
+        )
+        if command_sampling is not None and sampling_config not in (None, command_sampling):
+            raise ValueError("Command-line sampling settings conflict with the manifest.")
+        sampling_config = command_sampling or sampling_config
         local_archive_source = manifest_entry.get("download", {}).get("type") == "local"
         manifest_remove_words = configured_string_list(manifest_entry, "remove-words")
         manifest_remove_regex = configured_string_list(manifest_entry, "remove-regex")
@@ -301,6 +324,11 @@ def run(args: argparse.Namespace) -> int:
 
     elif input_arg:
         input_path = input_arg.resolve()
+        if args.sample_percent is not None:
+            sampling_config = normalize_sampling({
+                "sample-percent": args.sample_percent,
+                "sample-seed": args.sample_seed,
+            })
     output_root = (
         args.output_folder.expanduser().resolve()
         if args.output_folder
@@ -334,6 +362,31 @@ def run(args: argparse.Namespace) -> int:
         raise ValueError("--split-ratios requires two or three values.")
 
     parser_type = corpus.casefold() if corpus.casefold() in KNOWN_PARSERS else "general"
+    sampling_metadata = None
+    if sampling_config is not None:
+        if not (args.clean or args.load):
+            raise ValueError("Document sampling requires --clean or --load so selected documents can be processed.")
+        if input_path is None or not input_path.is_dir():
+            raise ValueError("Document sampling requires an extracted input directory.")
+        if args.clean:
+            from clean_text_corpus import _source_files
+            source_documents = _source_files(
+                input_path, True, include_extensionless=args.include_extensionless,
+                ignored_files=args.ignore_file,
+            )
+        else:
+            from data_process import collect_files
+            source_documents = collect_files(
+                input_path, args.ext or "", parser_type, args.ignore_file,
+            )
+        sample_root = (
+            output_root.parent / ".pipeline-samples" / corpus
+            / f"percent-{sampling_config['sample-percent']:g}-seed-{sampling_config['sample-seed']}"
+        )
+        input_path, sampling_metadata = sample_documents(
+            input_path, source_documents, sample_root, sampling_config,
+        )
+
     output_root.mkdir(parents=True, exist_ok=True)
     corpus_output.mkdir(parents=True, exist_ok=True)
 
@@ -389,6 +442,15 @@ def run(args: argparse.Namespace) -> int:
         command.append(str(source_folder))
         run_stage(command)
         write_database_sha(database_path)
+        sampling_marker = corpus_output / f"{corpus}.sampling.json"
+        if sampling_metadata is not None:
+            temporary_marker = sampling_marker.with_name(sampling_marker.name + ".tmp")
+            temporary_marker.write_text(
+                json.dumps(sampling_metadata, indent=2), encoding="utf-8"
+            )
+            temporary_marker.replace(sampling_marker)
+        else:
+            sampling_marker.unlink(missing_ok=True)
         loaded_this_run = True
 
     if split_requested:
@@ -459,6 +521,8 @@ def run(args: argparse.Namespace) -> int:
                     *(str(path) for path in rare_tests),
                     "--n",
                     str(order),
+                    "--token",
+                    args.token,
                 ]
             )
 

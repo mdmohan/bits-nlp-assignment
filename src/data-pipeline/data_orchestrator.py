@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shelve
 import subprocess
 import sys
@@ -27,6 +28,9 @@ from data_download import (
 )
 from database_integrity import database_files, verify_database_sha
 from log_utils import display_path, log_event
+from sampling import normalize_sampling
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from lm.tokenization import canonical_tokenizer_name, tokenizer_names
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -143,12 +147,15 @@ def command_for_pipeline(
     include_extensionless: bool = False,
     remove_words: list[str] | None = None,
     remove_regex: list[str] | None = None,
+    tokenizer_name: str = "space",
+    sampling: dict | None = None,
 ) -> list[str]:
     command = [
         sys.executable,
         str(SCRIPT_DIR / "data_pipeline.py"),
         "--corpus", corpus,
         "--out", str(output_root),
+        "--token", tokenizer_name,
     ]
     if input_path is not None:
         command.extend(("--in", str(input_path)))
@@ -160,6 +167,11 @@ def command_for_pipeline(
             command.extend(("--remove-regex", pattern))
     if include_extensionless:
         command.append("--include-extensionless")
+    if sampling is not None:
+        command.extend((
+            "--sample-percent", str(sampling["sample-percent"]),
+            "--sample-seed", str(sampling["sample-seed"]),
+        ))
     for ignored in ignore_files:
         command.extend(("--ignore-file", ignored))
     command.extend(("--load", "--split-ratios", *(str(ratio) for ratio in ratios), "--seed", str(seed)))
@@ -188,6 +200,9 @@ def run(args: argparse.Namespace) -> int:
     configured_rare_check = bool(data.get("rare-check", data.get("rare_check", False)))
     rare_check = configured_rare_check if args.rare_check is None else args.rare_check
     verbose = bool(args.verbose or data.get("verbose", False))
+    tokenizer_name = canonical_tokenizer_name(
+        args.token if args.token is not None else data.get("tokenizer", "space")
+    )
     raw_root = Path(data.get("input", "data/raw")).expanduser()
     output_root = Path(data.get("output", "data/processed")).expanduser()
     if not raw_root.is_absolute():
@@ -210,11 +225,14 @@ def run(args: argparse.Namespace) -> int:
         raise ValueError(f"Corpus '{corpus}' include-extensionless must be true or false")
     remove_words = configured_string_list(manifest_entry, "remove-words")
     remove_regex = configured_string_list(manifest_entry, "remove-regex")
+    sampling = normalize_sampling(manifest_entry.get("sampling"))
 
     log_event(
         "info",
         f"Preparing {corpus}: ratios={ratios}, seed={seed}, cached={'yes' if use_cached else 'no'}, "
-        f"clean={'yes' if clean else 'no'}, rare-check={'yes' if rare_check else 'no'}",
+        f"clean={'yes' if clean else 'no'}, rare-check={'yes' if rare_check else 'no'}, "
+        f"tokenizer={tokenizer_name}, "
+        f"sampling={sampling if sampling is not None else 'disabled'}",
     )
     if args.seed is not None:
         log_event("info", f"Split seed overridden by command line (config seed={configured_seed})")
@@ -226,7 +244,18 @@ def run(args: argparse.Namespace) -> int:
 
     corpus_output = output_root / corpus
     database_path = corpus_output / f"{corpus}.db"
-    if use_cached and database_files(database_path):
+    sampling_marker = corpus_output / f"{corpus}.sampling.json"
+    cached_sampling_matches = False
+    if sampling_marker.is_file():
+        try:
+            cached_sampling = json.loads(sampling_marker.read_text(encoding="utf-8"))
+            cached_sampling_matches = cached_sampling.get("config") == sampling
+        except (OSError, ValueError, AttributeError):
+            cached_sampling_matches = False
+    else:
+        cached_sampling_matches = sampling is None
+
+    if use_cached and database_files(database_path) and cached_sampling_matches:
         log_event("info", "Cached database found; checking its checksum before reuse")
         try:
             verify_database_sha(database_path)
@@ -244,6 +273,7 @@ def run(args: argparse.Namespace) -> int:
             command = [
                 sys.executable, str(SCRIPT_DIR / "data_pipeline.py"),
                 "--corpus", corpus, "--in", str(database_path), "--out", str(output_root),
+                "--token", tokenizer_name,
                 "--split-ratios", *(str(ratio) for ratio in ratios), "--seed", str(seed),
             ]
             for ignored in ignore_files:
@@ -255,6 +285,11 @@ def run(args: argparse.Namespace) -> int:
             run_pipeline(command, f"{corpus}: split cached database")
             log_event("ok", f"Data preparation finished in {time.perf_counter() - started_at:.1f}s")
             return 0
+    elif use_cached and database_files(database_path):
+        log_event(
+            "info",
+            "Cached database sampling metadata does not match the manifest; rebuilding from extracted source",
+        )
     elif use_cached:
         log_event("info", "No cached database found; resolving a local or downloadable source")
     else:
@@ -276,7 +311,8 @@ def run(args: argparse.Namespace) -> int:
     if source_path is not None:
         command = command_for_pipeline(
             corpus, output_root, ratios, seed, source_path, clean, rare_check, verbose,
-            ignore_files, include_extensionless, remove_words, remove_regex,
+            ignore_files, include_extensionless, remove_words, remove_regex, tokenizer_name,
+            sampling,
         )
         print(f"Using raw source: {display_path(source_path)}", flush=True)
         run_pipeline(command, f"{corpus}: prepare local source")
@@ -289,6 +325,7 @@ def run(args: argparse.Namespace) -> int:
         sys.executable, str(SCRIPT_DIR / "data_pipeline.py"),
         "--corpus", corpus, "--in", str(manifest_path),
         "--download", "--download-out", str(raw_root), "--out", str(output_root),
+        "--token", tokenizer_name,
     ]
     if clean:
         command.append("--clean")
@@ -315,6 +352,7 @@ def main() -> int:
     parser.add_argument("--config", type=Path, required=True, help="Model/data YAML with a top-level data: section.")
     parser.add_argument("--manifest", type=Path, default=None, help="Override the registry path; otherwise use data.manifest or src/data-pipeline/data.yaml.")
     parser.add_argument("--seed", "--split-seed", type=int, default=None, help="Override the configured split_seed for this run.")
+    parser.add_argument("--token", choices=tokenizer_names(), default=None, help="Override data.tokenizer (space, wp, or tb).")
     rare_group = parser.add_mutually_exclusive_group()
     rare_group.add_argument("--rare-check", dest="rare_check", action="store_true", help="Run rare n-gram analysis even if disabled in the config.")
     rare_group.add_argument("--no-rare-check", dest="rare_check", action="store_false", help="Skip rare n-gram analysis for this run.")

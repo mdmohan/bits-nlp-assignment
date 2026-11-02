@@ -107,6 +107,27 @@ fits; an interrupted fit restarts rather than resuming optimizer state mid-epoch
 For changed code, inputs or settings, copy the configuration and choose a new
 `name` and `output_root` before starting. Do not overwrite the completed pilot.
 
+### Legacy Model Runs And Tokenizer Diagnostics
+
+The original corpus-configured runner remains available for individual neural
+experiments. It supports epoch-boundary checkpoint resume and tokenizer selection
+(`space`, `wp` for WordPunct, or `tb` for Treebank):
+
+```sh
+python src/run.py src/configs/brown.yaml --algorithm ffnn --context-size 1 --token wp
+python src/run.py src/configs/brown.yaml --algorithm ffnn --context-size 1 --token wp --resume
+```
+
+To compare tokenizer token/type counts before a run, use:
+
+```sh
+python src/analyze_tokenizer_vocab.py data/processed/brown/train.txt
+```
+
+See the [LM guide](src/lm/README.md#shared-tokenization) for tokenizer and resume
+details, and the [pipeline guide](src/data-pipeline/README.md) for reproducible
+document sampling and corpus preparation options.
+
 ### Where Outputs Go
 
 | Execution | Output location |

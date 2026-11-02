@@ -23,6 +23,56 @@ The legacy controller's sentence-prefix `--train-percent` is not a document-budg
 study. Suite model entries use `id`, `family` and `architecture`; controller entries
 use `name` and `params`. Do not interchange the two configuration schemas.
 
+## Shared Tokenization
+
+Legacy model runs use one tokenizer for vocabulary construction, neural inputs,
+and evaluation. Set it in the config's `data` section or override it on the
+command line:
+
+```yaml
+data:
+  tokenizer: wp  # space (default), wp (WordPunct), or tb (Treebank)
+```
+
+```sh
+python src/run.py src/configs/blog-posts.yaml --token wp
+```
+
+The same setting is passed to data preparation and rare n-gram analysis. For a
+valid comparison, train and evaluate all models with the same tokenizer; changing
+it changes token boundaries, vocabulary size, and the prediction events. The
+tokenizer is recorded in run metadata and included in checkpoint identity checks.
+
+To estimate how each supported tokenizer changes token and type counts before a
+run, use the vocabulary diagnostic on a prepared sentence-per-line file:
+
+```sh
+python src/analyze_tokenizer_vocab.py data/processed/blog-posts/train.txt
+python src/analyze_tokenizer_vocab.py data/processed/blog-posts/train.txt --progress-every 100000
+```
+
+It reports line, token, and unique-type counts for whitespace, WordPunct, and
+Treebank tokenization. It lowercases by default, matching legacy model training;
+`--case-sensitive` preserves case.
+
+## Legacy Neural Checkpoint Resume
+
+The config-driven command checkpoints after each complete training and validation
+epoch. For example:
+
+```sh
+python src/run.py src/configs/blog-posts.yaml
+python src/run.py src/configs/blog-posts.yaml --resume
+```
+
+The latest resumable state lives under `results/<run name>/checkpoints/`. It
+contains model and optimizer state, completed epoch, validation-selection state,
+training history and random-number-generator state. A restart resumes at the next
+epoch; if a process stops mid-epoch, that incomplete epoch is repeated. Checkpoint
+files are atomically replaced at epoch boundaries and removed after final model and
+result artifacts are written. A completed result is reused by `--resume` when its
+configuration and input fingerprints still match.
+
 ## Suite Lifecycle
 
 1. `preflight`: check imported source hashes and eligibility without training.

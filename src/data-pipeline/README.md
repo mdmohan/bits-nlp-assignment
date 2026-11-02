@@ -6,7 +6,8 @@
 python src/data-pipeline/data_pipeline.py --corpus NAME [--in PATH] [--out FOLDER]
                             [--download] [--clean] [--load]
                             [--split-ratios TRAIN TEST [VALID TEST]]
-                            [--rare-check]
+                            [--rare-check] [--token space|wp|tb]
+                            [--sample-percent PERCENT --sample-seed SEED]
 ```
 
 Choose one or more processing stages. When several are selected, they run in this order:
@@ -34,6 +35,12 @@ Processing defaults to `data/processed`; download mode defaults to `data/raw`. P
 ```
 
 Only stages selected on the command line run, so files from unselected stages are not regenerated.
+
+`--token` selects the shared model/analyzer tokenizer: `space` (default), `wp`
+(NLTK WordPunct), or `tb` (NLTK Treebank). The orchestrator reads this setting
+from `data.tokenizer`; its `--token` option overrides the config. Use the same
+tokenizer for model training, evaluation, and rare n-gram analysis to keep token
+boundaries aligned.
 
 ## Imported Experiment Data
 
@@ -104,6 +111,29 @@ extract-path: corpora/gutenberg
 ignore-files:
   - README
 ```
+
+To run on a seeded subset, add `sampling` to the corpus entry in `data.yaml`:
+
+```yaml
+sampling:
+  sample-percent: 10
+  sample-seed: 3999
+```
+
+The pipeline selects that percentage of eligible source documents (rounded up to
+at least one document) immediately after extraction. It then cleans, loads,
+splits, and runs rare n-gram analysis using only those selected documents. The
+seed makes the document selection reproducible. If `sampling` is omitted or
+empty, all eligible documents follow the existing pipeline. Cached databases
+are reused only when their recorded sampling settings match the manifest.
+For a direct pipeline invocation, the same behavior is available with both
+`--sample-percent` and `--sample-seed`; sampling requires an extracted input
+folder and runs before cleaning/loading.
+
+To compare tokenization choices on a prepared train file before training, run
+`python src/analyze_tokenizer_vocab.py PATH/TO/train.txt`. The diagnostic reports
+line, token, and unique vocabulary counts for whitespace, WordPunct, and Treebank
+tokenization. It lowercases by default; pass `--case-sensitive` to preserve case.
 
 Cleaning rules can be configured on each corpus entry with `remove-words` and `remove-regex`, both arrays of strings. They are forwarded as repeated cleaning options when the orchestrator enables cleaning:
 

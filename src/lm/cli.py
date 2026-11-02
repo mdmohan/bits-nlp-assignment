@@ -32,9 +32,12 @@ from lm.evaluation import evaluate_model, sentence_events
 from lm.neural import build_model
 from lm.statistical.ngram import NgramLM
 from lm.neural.trainer import get_device
+from lm.tokenization import canonical_tokenizer_name, get_tokenizer, tokenize
 
 
-def iter_sentences(path: Path, lowercase: bool, percent: float = 100):
+def iter_sentences(path: Path, lowercase: bool, percent: float = 100,
+                   tokenizer_name: str = "space"):
+    tokenizer = get_tokenizer(tokenizer_name)
     limit = None
     if percent < 100:
         with path.open(encoding="utf-8") as handle:
@@ -43,7 +46,7 @@ def iter_sentences(path: Path, lowercase: bool, percent: float = 100):
     with path.open(encoding="utf-8") as handle:
         yielded = 0
         for line in handle:
-            sentence = line.split()
+            sentence = tokenizer.tokenize(line)
             if sentence:
                 yield [word.lower() for word in sentence] if lowercase else sentence
                 yielded += 1
@@ -51,7 +54,9 @@ def iter_sentences(path: Path, lowercase: bool, percent: float = 100):
                     break
 
 
-_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
+def _model_tokenizer(model_info: dict) -> str:
+    """Read tokenizer metadata, defaulting older in-memory model records to space."""
+    return canonical_tokenizer_name(model_info.get("tokenizer", "space"))
 
 
 class CountNGram:
@@ -209,6 +214,8 @@ class LanguageModelCLI:
             raise ValueError("Vocabulary differs; rebuild the n-gram using the neural model's training vocabulary")
         if ngram_info["lowercase"] != neural_info["lowercase"]:
             raise ValueError("The models use different lowercase preprocessing")
+        if _model_tokenizer(ngram_info) != _model_tokenizer(neural_info):
+            raise ValueError("The models use different tokenizers")
 
         expected_order = ngram_info["order"]
         rows = []
@@ -228,6 +235,10 @@ class LanguageModelCLI:
                     continue
                 if row_order != expected_order:
                     skipped_order += 1
+                    continue
+                csv_tokenizer = canonical_tokenizer_name(row.get("tokenizer") or "space")
+                if csv_tokenizer != _model_tokenizer(ngram_info):
+                    skipped_invalid += 1
                     continue
                 if len(tokens) != expected_order:
                     skipped_invalid += 1
@@ -318,6 +329,8 @@ class LanguageModelCLI:
             raise ValueError("Vocabulary differs; build both n-gram models from the same training vocabulary")
         if first["lowercase"] != second["lowercase"]:
             raise ValueError("The models use different lowercase preprocessing")
+        if _model_tokenizer(first) != _model_tokenizer(second):
+            raise ValueError("The models use different tokenizers")
         if limit < 0 or progress_seconds < 0:
             raise ValueError("--limit and --print-progress must be zero or positive")
 
@@ -357,7 +370,8 @@ class LanguageModelCLI:
         results = []
         for slot, model_info in enumerate((first, second)):
             results.append(evaluate_model(
-                model_info["lm"], vocab, iter_sentences(path, model_info["lowercase"]), "ngram",
+                model_info["lm"], vocab,
+                iter_sentences(path, model_info["lowercase"], tokenizer_name=_model_tokenizer(model_info)), "ngram",
                 event_sink=make_sink(slot, model_info), case_limit=0,
             ))
 
@@ -442,6 +456,8 @@ class LanguageModelCLI:
             raise ValueError("Vocabulary differs; build both n-gram models from the same training vocabulary")
         if first["lowercase"] != second["lowercase"]:
             raise ValueError("The models use different lowercase preprocessing")
+        if _model_tokenizer(first) != _model_tokenizer(second):
+            raise ValueError("The models use different tokenizers")
 
         rows = []
         skipped_order = skipped_invalid = skipped_eos = 0
@@ -458,6 +474,9 @@ class LanguageModelCLI:
                     continue
                 if row_order != first["order"]:
                     skipped_order += 1
+                    continue
+                if canonical_tokenizer_name(row.get("tokenizer") or "space") != _model_tokenizer(first):
+                    skipped_invalid += 1
                     continue
                 if len(tokens) != row_order:
                     skipped_invalid += 1
@@ -547,6 +566,7 @@ class LanguageModelCLI:
             "name": name, "model": model, "checkpoint": path, "vocab": vocab, "stoi": stoi,
             "run_dir": path.parent,
             "lowercase": data.get("lowercase", True),
+            "tokenizer": canonical_tokenizer_name(data.get("tokenizer", "space")),
             "train_path": train_path.resolve(),
             "train_percent": float(config.get("train_percent", 100)),
         }
@@ -555,7 +575,10 @@ class LanguageModelCLI:
         key = str(path)
         self.neural[key] = info
         self.active_neural = key
-        print(f"Loaded neural {name}: {path.name} (vocab {len(vocab):,}, device {self.device})")
+        print(
+            f"Loaded neural {name}: {path.name} (vocab {len(vocab):,}, "
+            f"tokenizer={info['tokenizer']}, device {self.device})"
+        )
         return key
 
     def _active_model(self):
@@ -584,9 +607,7 @@ class LanguageModelCLI:
     @torch.no_grad()
     def predict(self, text: str, limit: int = 5):
         info = self._active_model()
-        words = text.split()
-        if info["lowercase"]:
-            words = [w.lower() for w in words]
+        words = tokenize(text, _model_tokenizer(info), lowercase=info["lowercase"])
         stoi, vocab = info["stoi"], info["vocab"]
         oov = sum(w not in stoi for w in words)
         ids = [stoi[BOS]] + [stoi.get(w, stoi[UNK]) for w in words]
@@ -603,19 +624,8 @@ class LanguageModelCLI:
 
     @staticmethod
     def _read_sentences(path: Path):
-        """Read line-based corpora, splitting packed prose lines only as needed."""
-        with path.open(encoding="utf-8") as handle:
-            for line in handle:
-                line = line.strip()
-                if not line:
-                    continue
-                sentences = _SENTENCE_BOUNDARY.split(line) if any(
-                    marker in line for marker in (". ", "? ", "! ")
-                ) else (line,)
-                for sentence in sentences:
-                    words = sentence.split()
-                    if words:
-                        yield words
+        """Compatibility wrapper for reading one prepared sentence per line."""
+        yield from iter_sentences(path, lowercase=False)
 
     def load_ngram(
         self,
@@ -626,6 +636,7 @@ class LanguageModelCLI:
         smoothing: str = "mle",
         k: float | None = None,
         discount: float = 0.75,
+        tokenizer_name: str | None = None,
     ):
         if order < 2:
             raise ValueError("n must be at least 2")
@@ -642,15 +653,20 @@ class LanguageModelCLI:
             raise FileNotFoundError(f"Training file not found: {train_path}")
         # Match the saved neural vocabulary exactly whenever the same train split is used.
         nn_info = next((m for m in reversed(list(self.neural.values())) if m["train_path"] == train_path), None)
+        nn_tokenizer = _model_tokenizer(nn_info) if nn_info else "space"
+        tokenizer_name = canonical_tokenizer_name(
+            tokenizer_name if tokenizer_name is not None
+            else nn_tokenizer
+        )
         lowercase = nn_info["lowercase"] if nn_info else True
         train_percent = nn_info["train_percent"] if nn_info else 100
-        if nn_info:
+        use_neural_vocab = nn_info is not None and nn_tokenizer == tokenizer_name
+        if use_neural_vocab:
             vocab = nn_info["vocab"]
         else:
             counts = Counter()
             total = 0
-            for words in self._read_sentences(train_path):
-                words = [w.lower() for w in words] if lowercase else words
+            for words in iter_sentences(train_path, lowercase, train_percent, tokenizer_name):
                 counts.update(words)
                 total += 1
                 if total % 100_000 == 0:
@@ -663,17 +679,17 @@ class LanguageModelCLI:
         )
         print(
             f"Building {smoothing_label} {order}-gram '{name}' from "
-            f"{self._display_path(train_path)}",
+            f"{self._display_path(train_path)} (tokenizer={tokenizer_name})",
             flush=True,
         )
         started_at = time.perf_counter()
         allowed_target_ids = None
-        if nn_info:
+        if use_neural_vocab:
             allowed_target_ids = nn_info.get("allowed_target_ids")
         lm = CountNGram(
             order,
             vocab,
-            iter_sentences(train_path, lowercase, train_percent),
+            iter_sentences(train_path, lowercase, train_percent, tokenizer_name),
             smoothing=smoothing,
             k=1.0 if k is None else k,
             discount=discount,
@@ -682,6 +698,7 @@ class LanguageModelCLI:
         self.ngrams[name] = {
             "name": name, "order": order, "lm": lm, "vocab": vocab,
             "stoi": {w: i for i, w in enumerate(vocab)}, "lowercase": lowercase,
+            "tokenizer": tokenizer_name,
             "train_path": train_path,
             "smoothing": smoothing, "k": k, "discount": discount,
         }
@@ -690,6 +707,7 @@ class LanguageModelCLI:
             ("Name", name),
             ("Order", str(order)),
             ("Smoothing", smoothing_label),
+            ("Tokenizer", tokenizer_name),
             ("Training file", self._display_path(train_path)),
             ("Sentences", f"{lm.sentence_count:,}"),
             ("Training tokens", f"{lm.token_count:,}"),
@@ -740,6 +758,8 @@ class LanguageModelCLI:
             raise ValueError("Vocabulary differs. Load the neural checkpoint first, then rebuild the n-gram on its train.txt")
         if ngram_info and neural_info and ngram_info["lowercase"] != neural_info["lowercase"]:
             raise ValueError("The models use different lowercase preprocessing")
+        if ngram_info and neural_info and _model_tokenizer(ngram_info) != _model_tokenizer(neural_info):
+            raise ValueError("The models use different tokenizers")
         if progress_seconds < 0:
             raise ValueError("--print-progress must be zero or a positive number of seconds")
         if limit < 0:
@@ -857,7 +877,8 @@ class LanguageModelCLI:
         ng_zero = ng_correct = ng_covered = nn_correct = 0
         if ngram_info:
             ng_result = evaluate_model(
-                ngram_info["lm"], metric_vocab, iter_sentences(path, lowercase), "ngram",
+                ngram_info["lm"], metric_vocab,
+                iter_sentences(path, lowercase, tokenizer_name=_model_tokenizer(ngram_info)), "ngram",
                 event_sink=lambda event: retain(event, "ngram"), case_limit=0,
             )
             ng_nll = ng_result["finite_nll_sum"]
@@ -866,7 +887,8 @@ class LanguageModelCLI:
             ng_covered = ng_result["context_covered"]
         if neural_info:
             nn_result = evaluate_model(
-                neural_info["model"], metric_vocab, iter_sentences(path, lowercase), "neural", self.device,
+                neural_info["model"], metric_vocab,
+                iter_sentences(path, lowercase, tokenizer_name=_model_tokenizer(neural_info)), "neural", self.device,
                 allowed_target_ids=neural_info.get("allowed_target_ids"),
                 event_sink=lambda event: retain(event, "neural"), case_limit=0,
             )
@@ -923,7 +945,7 @@ class LanguageModelCLI:
                 [
                     ("Correct word predictions", word_correct_text),
                     ("Top-1 accuracy (word targets)", f"{accuracy:.2%}" if accuracy is not None else "n/a"),
-                    ("Top-1 when word context seen", f"{seen_accuracy:.2%}" if ng_word_result["context_covered"] else "n/a"),
+                    ("Top-1 when context seen", f"{seen_accuracy:.2%}" if ng_word_result["context_covered"] else "n/a"),
                     ("Contexts seen in training", context_coverage),
                     ("Zero-probability events (incl. </s>)", f"{ng_zero:,} / {total:,} ({ng_zero / total:.2%})" if total else "n/a"),
                     ("Perplexity (incl. </s>)", perplexity_text(ng_result)),
@@ -1017,9 +1039,9 @@ class LanguageModelCLI:
         print("Commands:")
         print("  nn load CHECKPOINT.pt")
         print("  vocab [N] | stats | predict TEXT     inspect the active neural checkpoint")
-        print("  ngram NAME --n N --train TRAIN.txt [--min-freq N] [--smoothing mle|laplace|backoff]")
+        print("  ngram NAME --n N --train TRAIN.txt [--token space|wp|tb] [--min-freq N] [--smoothing mle|laplace|backoff]")
         print("       Laplace requires --k; backoff accepts --discount (default 0.75).")
-        print("  ngram NAME --evaluate FILE.txt [--limit N] [--print-progress SECONDS]")
+        print("  ngram NAME --evaluate FILE.txt [--token space|wp|tb] [--limit N] [--print-progress SECONDS]")
         print("       Shows up to 25 unique correct and incorrect contexts, ranked by P(prediction); --limit 0 shows all unique contexts.")
         print("  compare --one ngram NAME --two ngram|neural NAME (--test FILE.txt | --csv RARE.csv) [--limit N] [--n N]")
         print("       Supports n-gram vs neural, or two same-order n-gram models (for example MLE vs Laplace).")
@@ -1080,7 +1102,7 @@ class LanguageModelCLI:
                 tokens = before.split()
 
             commands = ["nn", "vocab", "stats", "predict", "ngram", "compare", "models", "help", "quit"]
-            options = ["--n", "--train", "--evaluate", "--min-freq", "--smoothing", "--k", "--discount", "--limit", "--print-progress", "--one", "--two", "--test", "--csv"]
+            options = ["--n", "--train", "--evaluate", "--min-freq", "--smoothing", "--k", "--discount", "--limit", "--print-progress", "--token", "--one", "--two", "--test", "--csv"]
             if not tokens:
                 choices = commands
             elif tokens[0] == "nn" and len(tokens) == 1:
@@ -1089,12 +1111,14 @@ class LanguageModelCLI:
                 choices = self._path_completions(text)
             elif tokens[0] == "ngram" and tokens[-1] in {"--train", "--evaluate"}:
                 choices = self._path_completions(text)
+            elif tokens[0] == "ngram" and tokens[-1] == "--token":
+                choices = list(tokenizer_names())
             elif tokens[0] == "ngram" and tokens[-1] == "--smoothing":
                 choices = ["mle", "laplace", "backoff"]
             elif tokens[0] == "ngram" and text.startswith("-"):
-                choices = options[:9]
+                choices = options[:10]
             elif tokens[0] == "ngram" and len(tokens) >= 2 and not text:
-                choices = options[:9]
+                choices = options[:10]
             elif tokens[0] == "compare" and tokens[-1] in {"--test", "--csv"}:
                 choices = self._path_completions(text)
             elif tokens[0] == "compare" and tokens[-1] in {"--one", "--two"}:
@@ -1163,6 +1187,7 @@ class LanguageModelCLI:
                     parser.add_argument("--discount", type=float, default=0.75, help="backoff discount")
                     parser.add_argument("--limit", type=int, default=25)
                     parser.add_argument("--print-progress", type=float, default=10.0)
+                    parser.add_argument("--token", choices=tokenizer_names(), default=None)
                     a = parser.parse_args(args[1:])
                     if a.n is not None:
                         if a.train is None:
@@ -1170,10 +1195,13 @@ class LanguageModelCLI:
                         self.load_ngram(
                             a.name, a.n, a.train, a.min_freq,
                             smoothing=a.smoothing, k=a.k, discount=a.discount,
+                            tokenizer_name=a.token,
                         )
                     else:
                         if a.name not in self.ngrams:
                             raise ValueError(f"Unknown n-gram: {a.name}")
+                        if a.token and canonical_tokenizer_name(a.token) != _model_tokenizer(self.ngrams[a.name]):
+                            raise ValueError("--token must match the tokenizer used to build this n-gram")
                         self.evaluate(a.evaluate, self.ngrams[a.name], None, a.limit, a.print_progress)
                 elif cmd == "compare":
                     parser = argparse.ArgumentParser(prog="compare", add_help=False)

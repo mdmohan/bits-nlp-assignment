@@ -123,6 +123,11 @@ corpora:
       - '\b[A-Za-z]{20,}\b'
       - '(?i)\(?\b\d{1,2}:\d{2}:\d{2}\s*[AP]M\b\)?'
       - '\bwww\.[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:/[^\s]*)?'
+    # Select this fraction of source documents before cleaning/loading.
+    # The percentage applies to document count, not bytes, sentences, or tokens.
+    sampling:
+      sample-percent: 10
+      sample-seed: 3999
 
   roc-stories:
     title: ROC Stories (local archive)
@@ -189,7 +194,8 @@ corpora:
 #   leakage_checks: Describe exact/near-duplicate checks across train and test.
 #   evaluation: Record which models/metrics were used to compare this corpus.
 # `extract-path`, `ignore-files`, `include-extensionless`, `remove-words`, and
-# `remove-regex` are operational. The last two are used only when cleaning is
-# enabled, and each is an array. Example:
+# `remove-regex` are operational. `sampling` selects a seeded percentage of
+# source documents immediately after extraction and before cleaning/loading.
+# The removal fields are used only when cleaning is enabled, and each is an array.
 #   remove-words: [urlLink, nbsp]
 #   remove-regex: ['https?://\\S+', '\\bfoo\\d+']

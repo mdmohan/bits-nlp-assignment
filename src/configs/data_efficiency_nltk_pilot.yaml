@@ -68,8 +68,21 @@ models:
       lr: [0.001]
       seed: 7
     final_seeds: [42]
-  - id: ffnn
+  - id: ffnn_ctx1
     family: neural
+    model: ffnn
+    architecture:
+      context_size: 1
+      embed_dim: 128
+      hidden_dim: 256
+      dropout: 0.3
+    tuning:
+      lr: [0.001]
+      seed: 7
+    final_seeds: [42]
+  - id: ffnn_ctx2
+    family: neural
+    model: ffnn
     architecture:
       context_size: 2
       embed_dim: 128

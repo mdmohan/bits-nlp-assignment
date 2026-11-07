@@ -8,11 +8,11 @@
 | Anuj Kumar Srivastava | 2025cs05040 |
 | Murali Das Mohan | 2025cs05052 |
 
-Working manuscript, version 0.4, 6 November 2026\. Expanded to six corpora with Reuters, ROCStories and WebText. Editable research draft, not a submission-ready paper. Saved metrics and test-event probabilities were reanalysed; no models were retrained or rescored for this update. ROCStories and WebText have one neural seed and remain exploratory. Related work includes publication records through October 2026\. Affiliations, contribution statements and submission formatting remain open.
+Working manuscript, version 0.5, 7 November 2026\. Expanded to six corpora with Reuters, ROCStories and WebText. Editable research draft, not a submission-ready paper. Saved metrics were reanalysed, and the revised three-seed WebText checkpoints were rescored on their fingerprint-matched held-out split; no models were retrained for this update. ROCStories remains the only one-seed neural experiment. Related work includes publication records through October 2026\. Affiliations, contribution statements and submission formatting remain open.
 
 ## **Abstract**
 
-Sparse observations make language modeling a choice between reliable counts and generalization beyond observed sequences. We compare six bigram/trigram estimators, two feed-forward models and a sentence-level LSTM across Brown, Gutenberg, Inaugural, Reuters, ROCStories and WebText. Five training budgets, three neural seeds for four corpora and one for two yield 390 test conditions. At full budget, LSTM beats the best backoff model by 20.5% on Brown and 29.2% on ROCStories; backoff leads on the other four. LSTM nevertheless reduces perplexity on unseen bigrams with retained targets by 11.5-82.3% across all six corpora. On Gutenberg, Inaugural and Reuters, OOV losses outweigh its gains on non-OOV events. ROCStories tolerates a severe conditional OOV penalty because only 0.8% of scored events are OOV. WebText is a counterexample to an OOV-only explanation: LSTM also loses on non-OOV events and worsens on its fixed target cohort between the smallest and largest budgets. WebText further exposes misleading mapped-label accuracy: 1,442 of trigram add-one’s 1,470 correct predictions are unknown symbols. These findings distinguish contextual generalization, lexical coverage and evaluation effects. Single-seed results, ordered budgets, changing prediction support, limited document coverage and heterogeneous hardware preclude a universal data-efficiency threshold.
+Sparse observations cause unsmoothed n-gram language models to assign zero probability to plausible unseen sequences. We compare bigram and trigram maximum-likelihood, add-one-smoothed and absolute-discount backoff models with feed-forward neural models and a sentence-level LSTM. For context-matched comparisons, the feed-forward models use either a one-token history, corresponding to a bigram model, or a two-token history, corresponding to a trigram model. The LSTM can use the full preceding sentence prefix and is treated as a longer-context comparator. The primary complete-training comparison spans six corpora and is supplemented by a separate five-level training-percentage experiment; evaluation uses perplexity, accuracy, OOV rate, runtime and event-level error categories. Unsmoothed models consistently produce infinite held-out perplexity, while backoff provides the strongest aggregate performance on four corpora and LSTM on two. Neural gains are concentrated in particular unseen-context conditions rather than occurring universally, and mapped \<unk\> predictions can substantially inflate apparent accuracy. We conclude that smoothing reliably addresses zero-probability failure, but the relative advantage of backoff and neural modeling depends on corpus composition, lexical coverage and evaluation design.
 
 **Keywords:** language modeling; smoothing; absolute discounting; neural networks; LSTM; data sparsity; vocabulary growth.
 
@@ -24,7 +24,12 @@ These approaches address related but distinct kinds of sparsity. An unseen trigr
 
 Training-budget comparisons introduce another difficulty. If the vocabulary is rebuilt at each budget, more training text also changes the prediction problem. Words previously collapsed into an unknown-word class become separate targets, output layers grow, and mapped contexts change. A rising aggregate perplexity therefore need not mean that additional training observations damaged predictive ability.
 
-We investigate three questions: (1) which models perform best on the full held-out test sets; (2) how their relative performance changes across observed training budgets; and (3) which categories of test events account for the differences. The experiment is a descriptive comparison on one document split and one ordered budget sequence per corpus. It does not identify a universal data threshold or isolate the causal effect of training size.
+Primary research question: Under matched held-out evaluation, how effectively do smoothing, backoff, and small neural language models predict sparse and unseen word sequences, and how does their relative behavior vary with corpus and training budget?
+
+We address this through three subquestions:
+* (1) which models perform best on the full held-out test sets;
+* (2) how their relative performance changes across observed training budgets; and
+* (3) which categories of test events account for the differences.
 
 ## **2\. Related Work**
 
@@ -48,11 +53,87 @@ NLTK \[6\] supplies corpus access, not uniform preprocessing or licensing. Follo
 
 ## **3\. Data and Preprocessing**
 
-### **3.1 Corpora and Document Splits**
+### **3.1 Corpora and Raw Sources**
 
-We use Brown, Gutenberg, Inaugural, Reuters, ROCStories and WebText. The directory called brown\_press\_neural contains the full Brown corpus, not only its press genres. Document splits use seed 42 except WebText, which uses 3999\. Reuters contributes 8,212 retained news documents; ROCStories contributes 98,161 story documents from the archived public mirror. WebText contains five retained source files, not thousands of independent documents. Table 1 reports post-quarantine sizes; split percentages are nominal document-allocation settings, not training budgets.
+We use six English-language corpora: Brown, Gutenberg, Inaugural, Reuters, ROCStories and WebText. Five are distributed through the NLTK data library; ROCStories was obtained separately. Table 1 summarizes how each corpus was acquired and the type and scale of text it contains.
 
-**Table 1\. Dataset and vocabulary characteristics.** OOV percentages use word tokens as the denominator. Vocabulary sizes are the stored vocabulary sizes, including reserved symbols.
+**Table 1\. Corpus sources and raw collection characteristics.** Archive sizes are those of the compressed files downloaded for this experiment and may vary across package revisions. Source-unit counts precede experimental splitting; parenthetical values identify units retained by the preprocessing pipeline.
+
+| Corpus | Source | Genre and contents | Source documents or items | Downloaded archive size (local copy) |
+| :---- | :---- | :---- | ----: | ----: |
+| Brown | NLTK Data package `brown` using `nltk.download("brown")` | Mixed-genre American English prose, including news, fiction, academic and other published writing | 500 documents | 3.16 MiB |
+| Gutenberg | NLTK Data package `gutenberg` using `nltk.download("gutenberg")` | Public-domain books spanning novels, religious text, poetry, drama and stories | 18 books | 4.05 MiB |
+| Inaugural | NLTK Data package `inaugural` using `nltk.download("inaugural")` | U.S. presidential inaugural addresses and historical political speech | 60 addresses | 0.33 MiB |
+| Reuters | NLTK Data package `reuters` using `nltk.download("reuters")` | Reuters-21578 newswire, primarily business and economic reporting | 10,788 stories (8,212 retained) | 6.08 MiB |
+| ROCStories | https://huggingface.co/datasets/mintujupally/ROCStories | Curated five-sentence narratives about everyday events and commonsense situations. | 98,161 retained stories | 8.32 MiB |
+| WebText | NLTK Data package `webtext` using `nltk.download("webtext")` | Heterogeneous informal web text, including dialogue, overheard conversations, personal advertisements and reviews | 6 source files (5 retained) | 0.62 MiB |
+
+### **3.2 Data Preparation and Document Splits**
+
+All corpora were prepared through the same configuration-driven orchestrator. The model configuration specifies the corpus, split ratios, seed and tokenizer, while the corpus manifest specifies its source, extraction path, ignored files and cleaning rules. A previously built corpus database is reused only after its SHA-256 sidecar and sampling metadata have been verified; otherwise, the source is located or downloaded and processed from the beginning.
+
+```mermaid
+flowchart LR
+    %% Color Definitions
+    classDef input fill:#FFB3BA,color:#000,stroke:#E599A0,stroke-width:2px;
+    classDef db fill:#BAE1FF,color:#000,stroke:#99C3E5,stroke-width:2px;
+    classDef process fill:#BAFFC9,color:#000,stroke:#9CE5AD,stroke-width:2px;
+    classDef split fill:#FFDFBA,color:#000,stroke:#E5C6A0,stroke-width:2px;
+    classDef analysis fill:#E0BBE4,color:#000,stroke:#C499C9,stroke-width:2px;
+    classDef output fill:#FFFFBA,color:#000,stroke:#E5E5A0,stroke-width:3px;
+
+    %% Subgraphs for pipeline phases
+    subgraph Phase1 [1. Init & Cache Check]
+        A([YAML & Manifest]):::input --> B{Cached DB Usable?}:::db
+        B -->|Yes| C[Verify SHA-256 & Meta]:::db
+    end
+
+    subgraph Phase2 [2. Sourcing & Processing]
+        D{Source Local?}:::db -->|No| E[Download Archive]:::db
+        D -->|Yes| F[Extract Sources]:::process
+        E --> F
+        F --> G[Filter & Sample]:::process
+        G --> H[Clean Text]:::process
+        H --> I[Parse Sentences]:::process
+        I --> J[(Shelve DB & SHA)]:::db
+    end
+
+    subgraph Phase3 [3. Splitting & Analysis]
+        K[[Document Split]]:::split --> L[(train, valid, test)]:::split
+        L --> M{Rare Seq Analysis?}:::analysis
+        M -->|Yes| N[Count n-grams]:::analysis
+        N --> O[/Rare CSVs/]:::analysis
+    end
+
+    %% Cross-phase connections
+    B -->|No| D
+    C --> K
+    J --> K
+    O --> P(((Prepared Corpus))):::output
+    M -->|No| P
+
+    %% Subgraph Styling
+    style Phase1 fill:#f9f9fa,stroke:#ccc,stroke-dasharray: 5 5, rx:10
+    style Phase2 fill:#f9f9fa,stroke:#ccc,stroke-dasharray: 5 5, rx:10
+    style Phase3 fill:#f9f9fa,stroke:#ccc,stroke-dasharray: 5 5, rx:10
+```
+
+#### **Cleaning**
+
+All corpora underwent a documented cleaning stage. A shared procedure handled general normalization, while corpus-specific rules addressed source structure and artifacts. Shared operations included robust decoding, language and length quality checks, duplicate filtering, and removal of boilerplate or low-information content. Additional operations were applied where necessary, including metadata exclusion, POS-tag removal, document-wrapper removal, and configurable literal-word or regular-expression cleanup. JSON audit reports were preserved with the processed artifacts as evidence of accepted, rejected and removed content and to support subsequent analysis of preprocessing decisions.
+
+**Corpus-specific processing.**
+
+- **Brown:** POS-tag suffixes were removed from the extensionless source files. Blank lines were used to identify paragraphs, followed by NLTK sentence segmentation.
+- **Gutenberg:** Package metadata were excluded and Project Gutenberg START/END wrappers were removed when present. Blank-line-delimited paragraphs were normalized before punctuation-aware sentence segmentation.
+- **Inaugural:** Each presidential address was cleaned as a separate document. Blank-line-separated paragraphs were normalized and segmented into sentences with NLTK.
+- **Reuters:** Package metadata were excluded while extensionless news stories were retained. Plain-text or SGML article bodies were extracted, normalized into paragraphs and segmented into sentences.
+- **ROCStories:** The downloaded story tables were converted into 200 plain-text shards containing one five-sentence story per line. The text was cleaned and segmented into paragraph and sentence records; shard files, rather than individual story rows, were the split units.
+- **WebText:** `firefox.txt` was excluded, and the remaining five source files were cleaned separately. Blank-line-delimited text blocks were normalized and segmented into sentences with NLTK.
+
+Table 2 reports the experiment-specific document splits and post-preprocessing vocabulary statistics.
+
+**Table 2\. Dataset and vocabulary characteristics.** OOV percentages use word tokens as the denominator. Vocabulary sizes are the stored vocabulary sizes, including reserved symbols.
 
 | Property | Brown | Gutenberg | Inaugural |
 | :---- | ----: | ----: | ----: |
@@ -66,105 +147,185 @@ We use Brown, Gutenberg, Inaugural, Reuters, ROCStories and WebText. The directo
 | Vocabulary, 20% \-\> 100% | 9,980 \-\> 24,325 | 20,024 \-\> 75,817 | 5,421 \-\> 12,136 |
 | Test-word OOV, 20% \-\> 100% | 11.5% \-\> 5.8% | 17.7% \-\> 9.3% | 11.9% \-\> 5.7% |
 
-*Table 1 continued: added corpora.*
+*Table 2 continued: added corpora.*
 
 | Property | Reuters | ROCStories | WebText |
 | :---- | ----: | ----: | ----: |
-| Retained source documents | 8,212 | 98,161 | 5 |
-| Train / validation / test documents | 5,748 / 1,643 / 821 | 68,710 / 19,635 / 9,816 | 3 / 1 / 1 |
-| Nominal split proportions | 70 / 20 / 10 | 70 / 20 / 10 | 70 / 20 / 10 |
-| Full training words | 889,683 | 2,980,263 | 53,269 |
-| Test words | 126,774 | 427,651 | 3,550 |
-| Test events, including EOS | 132,681 | 476,535 | 3,866 |
+| Retained source documents | 8,212 | 200 text shards (98,161 stories) | 5 |
+| Train / validation / test documents | 5,748 / 1,643 / 821 | 140 / 40 / 20 shard files | 1 / 2 / 2 |
+| Nominal split proportions | 70 / 20 / 10 | 70 / 20 / 10 | 20 / 40 / 40 |
+| Full training words | 889,683 | 2,980,263 | 156,464 |
+| Test words | 126,774 | 427,651 | 42,141 |
+| Test events, including EOS | 132,681 | 476,535 | 46,701 |
 | Minimum retained frequency | 1 | 1 | 1 |
-| Vocabulary, 20% \-\> 100% | 20,215 \-\> 55,921 | 28,661 \-\> 58,271 | 2,107 \-\> 9,609 |
-| Test-word OOV, 20% \-\> 100% | 9.0% \-\> 4.4% | 2.5% \-\> 0.9% | 68.5% \-\> 49.2% |
-| Neural seeds | 13, 42, 2026 | 13 only | 13 only |
+| Vocabulary, 20% \-\> 100% | 20,215 \-\> 55,921 | 28,661 \-\> 58,271 | 5,891 \-\> 18,489 |
+| Test-word OOV, 20% \-\> 100% | 9.0% \-\> 4.4% | 2.5% \-\> 0.9% | 41.3% \-\> 30.4% |
+| Neural seeds | 13, 42, 2026 | 13 only | 13, 42, 2026 |
 
 Brown’s test split covers 14 genres. Gutenberg’s test books are Austen’s *Emma* and the King James Bible; validation uses Chesterton’s *The Ball and the Cross* and Whitman’s *Leaves of Grass*. Its test text is slightly larger than its full training text, and two books do not provide broad independent domain coverage. Inaugural’s test addresses are Washington (1793), Monroe (1817), Taylor (1849), Buchanan (1857), Truman (1949) and Carter (1977). The reported scores characterize these particular held-out collections.
 
-WebText trains on grail.txt, pirates.txt and wine.txt, validates on overheard.txt, and tests on singles.txt. Its validation text contains 156,464 words, nearly three times its training text; the test has only 316 sentences from one source. This is a narrow cross-source stress case, not a representative web-language benchmark. ROCStories models reset state at sentence boundaries: a narrative corpus does not turn this into a story-level reasoning experiment.
+WebText trains on `overheard.txt`, validates on `grail.txt` and `singles.txt`, and tests on `pirates.txt` and `wine.txt`. The resulting splits contain 17,958 / 2,228 / 4,560 sentences and 156,464 / 14,763 / 42,141 words. This is a cross-source stress case rather than a representative web-language benchmark. ROCStories models reset state at sentence boundaries: a narrative corpus does not turn this into a story-level reasoning experiment.
 
 The saved leakage audits report zero exact lowercase/whitespace-normalized sentence overlaps between splits after quarantining 5,801 Brown, 624 Gutenberg and 17 Inaugural occurrences. Two Gutenberg near-duplicate pairs involving Biblical quotations were retained under an audit-only policy. Exact-match removal and a thresholded near-duplicate audit do not establish that all semantic overlap or source dependence has been eliminated.
 
-The corresponding added-corpus quarantine totals are 1,518 Reuters, 3,192 ROCStories and 74 WebText occurrences, with zero reported exact overlaps. Reuters retains six flagged near-duplicate pairs under the accepted audit-only policy; its original audit still labels them for review. ROCStories’ near-duplicate scan was not run, an accepted and recorded limitation, whereas WebText’s scan found no candidates above its threshold. These audit scopes are not equivalent.
+The corresponding saved quarantine totals are 1,518 Reuters and 3,192 ROCStories occurrences, with zero reported exact overlaps. Reuters retains six flagged near-duplicate pairs under the accepted audit-only policy; its original audit still labels them for review. ROCStories’ near-duplicate scan was not run, an accepted and recorded limitation. The revised WebText archive does not contain a replacement leakage report. A fresh exact lowercase/whitespace-normalized audit of its fingerprint-matched files finds 37 sentence strings occurring across more than one split (175 total occurrences), mostly short dialogue such as “fine.” and “good.”; near-duplicate leakage was not re-audited. We therefore treat WebText as an exploratory source-shift stress test rather than leakage-clean confirmatory evidence.
 
-### **3.2 Tokenization and Unknown Words**
+### **3.3 Tokenization and Unknown Words**
 
-All six corpora use lowercase whitespace tokenization, but their inputs differ. Brown retains punctuation tags such as ,/, and ./.. Attached punctuation in the other corpora makes forms such as lord, lord, and lord: distinct types. Vocabulary growth and OOV rates reflect preprocessing as well as lexical diversity. Cross-corpus perplexity levels should not be interpreted on a common scale.
+All six corpora use lowercase whitespace tokenization. Each training budget builds its own vocabulary, and types occurring fewer than the configured minimum frequency are mapped to \<unk\>. Whitespace tokenization preserves punctuation attached to words, so forms such as `lord`, `lord,` and `lord:` remain distinct types. Vocabulary size and OOV rate therefore reflect preprocessing and the frequency threshold as well as lexical diversity. An unknown-word output that never appears as a positive training target is still affected by updates through the softmax distribution, so it is not wholly “untrained.” Because token inventories and unknown-word mappings differ, perplexity values should not be compared directly across corpora.
 
-Each budget builds a vocabulary from its own training text. Words below the minimum frequency map to \<unk\>. Brown uses min\_freq=2, while Gutenberg and Inaugural use 1, a deviation from the earlier uniform-threshold research plan. A fresh count of the full-budget text finds 19,602 Brown word occurrences below the threshold and zero in the other two corpora; none contains a literal \<unk\> token. Thus Brown supplies positive unknown-target examples, while Gutenberg and Inaugural do not. In the latter models, the unknown output is still affected by softmax training, but it never receives positive target supervision. Calling its parameters wholly “untrained” would be imprecise.
+**Brown.** Brown uses `min_freq=2`. Its processed text retains punctuation-bearing forms such as `,/,` and `./.`, which contribute to its token inventory. In the complete training split, 19,602 word-token occurrences belong to types below the threshold and are mapped to \<unk\>; the training text contains no literal \<unk\> token. Brown therefore supplies positive unknown-target examples during training.
 
-Reuters, ROCStories and WebText also use min\_freq=1: their full-budget text contains no sub-threshold or literal \<unk\> occurrences. All five threshold-one corpora therefore lack positive unknown-target examples. ROCStories shows why that setting alone cannot determine the aggregate winner: its unknown-target problem is severe conditionally but affects relatively few events.
+**Gutenberg.** Gutenberg uses `min_freq=1`, so every type observed in the complete training split is retained. The training text contains no literal \<unk\> token and consequently provides no positive unknown-target examples. Its book-derived text contains many punctuation-attached and historically inflected forms, contributing to its comparatively large vocabulary and held-out OOV rate.
 
-### **3.3 Training Budgets**
+**Inaugural.** Inaugural also uses `min_freq=1` and contains no literal \<unk\> token. Every observed training type is retained, so the unknown output receives no positive target supervision. Its vocabulary reflects the spelling, punctuation and historical variation found across presidential addresses.
 
-Budgets of 20%, 40%, 60%, 80% and 100% are prefixes of the training sentences, not random samples or whole-document subsets. Documents are concatenated in sorted-ID order. Brown therefore adds genres in a fixed order; fiction enters only in the larger budgets. Inaugural adds progressively later addresses. Gutenberg adds books alphabetically by source identifier. A prefix can end inside a document.
+**Reuters.** Reuters uses `min_freq=1`; its complete training split has neither sub-threshold types nor literal \<unk\> tokens. The unknown output therefore receives no positive target examples, although unseen held-out words are still mapped to \<unk\> during evaluation.
 
-The actual 20% word totals are 202,514, 219,389, 29,618, 174,359, 596,519 and 7,745 for Brown, Gutenberg, Inaugural, Reuters, ROCStories and WebText. Inaugural’s 20% sentence budget contains about 30% of its full training words; WebText’s contains only 14.5%. Reuters and ROCStories follow sorted source IDs, not verified chronological or randomized curriculum order. WebText adds material in source-file order. Budget labels are not exact word or compute fractions, and added data changes composition, vocabulary and model size simultaneously.
+**ROCStories.** ROCStories uses `min_freq=1` and likewise supplies no positive unknown-target examples. Its complete-training OOV event share is small, although the conditional loss on those events is severe. This distinction helps explain why unknown-word behavior alone does not determine its aggregate model ranking.
+
+**WebText.** WebText uses `min_freq=1` and has no literal \<unk\> token in its training text. Its cross-source test split nevertheless has a 30.42% word-token OOV rate after training on the complete split. Those words are evaluated as the common \<unk\> label, making it important to report retained-word accuracy separately from mapped-label accuracy.
+
+### **3.4 Training-Percentage Experiment**
+
+The primary experiment uses the complete training split. A separate training-percentage experiment uses prefixes containing 20%, 40%, 60%, 80% and 100% of the training sentences; these are not random samples or whole-document subsets. Documents are concatenated in sorted-ID order. Brown therefore adds genres in a fixed order; fiction enters only in the larger prefixes. Inaugural adds progressively later addresses. Gutenberg adds books alphabetically by source identifier. A prefix can end inside a document.
+
+The actual 20% word totals are 202,514, 219,389, 29,618, 174,359, 596,519 and 30,731 for Brown, Gutenberg, Inaugural, Reuters, ROCStories and WebText. Inaugural’s 20% sentence budget contains about 30% of its full training words; WebText’s contains 19.6%. Reuters and ROCStories follow sorted source IDs, not verified chronological or randomized curriculum order. WebText budgets are prefixes of the single training source. Budget labels are not exact word or compute fractions, and added data changes vocabulary and model size simultaneously.
 
 ## **4\. Models and Evaluation**
 
-### **4.1 Count-Based Models**
+### **4.1 Statistical Models**
 
-For history ![][image1], target ![][image2], counts ![][image3] and history total ![][image4], maximum-likelihood estimation is
+The statistical models operate on the shared word vocabulary for each corpus and training budget. A bigram uses the preceding token as history, whereas a trigram uses the preceding two tokens. Sentence starts are padded with one or two BOS symbols as required, and EOS is scored as the final target. The permitted target set contains ordinary vocabulary words, \<unk\> and EOS; padding and BOS cannot be predicted.
 
-![][image5]
+#### **4.1.1 Maximum-Likelihood Estimation**
 
-An unobserved event or history receives zero probability. Add-one smoothing uses
+For history $h$, target word $w$, n-gram count $c(h,w)$ and history count $c(h)$, the maximum-likelihood estimate is
 
-![][image6]
+$$
+P_{\mathrm{MLE}}(w \mid h)=\frac{c(h,w)}{c(h)}.
+$$
 
-where ![][image7] is the allowed prediction support. \<unk\> and EOS are included; padding and BOS are excluded. The support size in this formula is therefore not the complete stored vocabulary size in Table 1\.
+The implementation returns probability zero when either the complete n-gram or its history was not observed. Consequently, a single unseen test event makes sentence and corpus perplexity infinite.
 
-Absolute-discount backoff uses ![][image8]. For an observed history with at least one unobserved continuation,
+#### **4.1.2 Add-One Smoothing**
 
-![][image9]
+Add-one, or Laplace, smoothing assigns one pseudocount to every permitted target:
 
-where ![][image10] drops the oldest history token. If ![][image11] is the set of observed continuations,
+$$
+P_{\mathrm{add1}}(w \mid h)=\frac{c(h,w)+1}{c(h)+|V|}.
+$$
 
-![][image12]
+Here, $V$ is the permitted target set described above. Its size is therefore smaller than the complete stored vocabulary size in Table 2\. Add-one smoothing eliminates zero probabilities but distributes mass uniformly among all unseen continuations, regardless of their plausibility.
 
-An entirely unseen history backs off directly. The unigram base is add-one smoothed. If a history has observed every allowed continuation, the implementation uses MLE rather than discounting mass with nowhere to redistribute it. Bigram and trigram MLE, add-one and backoff variants share one counting pass per corpus-budget pair. Kneser-Ney is not evaluated.
+#### **4.1.3 Absolute-Discount Backoff**
+
+Absolute-discount backoff uses discount $d=0.75$. For an observed history with at least one unobserved continuation,
+
+$$
+P_{\mathrm{BO}}(w \mid h)=
+\begin{cases}
+\dfrac{c(h,w)-d}{c(h)}, & c(h,w)>0,\\[6pt]
+\alpha(h)P_{\mathrm{BO}}(w \mid h'), & c(h,w)=0,
+\end{cases}
+$$
+
+where $h'$ drops the oldest history token. If $S_h$ is the set of words observed after $h$, then
+
+$$
+\alpha(h)=
+\frac{d|S_h|/c(h)}
+{1-\sum_{u\in S_h}P_{\mathrm{BO}}(u \mid h')}.
+$$
+
+An entirely unseen history backs off directly, and the unigram base is add-one smoothed. Unlike an interpolated model, this implementation consults the lower order only when the higher-order n-gram is unseen.
+
+The bigram and trigram MLE, add-one and backoff variants share one counting pass per corpus-budget pair. This keeps their count evidence identical while varying the treatment of unseen events. Kneser-Ney is not evaluated.
 
 ### **4.2 Neural Models and Training**
 
-The feed-forward models concatenate embeddings of the previous one or two tokens, apply a 256-unit tanh layer, and predict through a softmax output. Embeddings have dimension 128 and hidden-layer dropout is 0.3. The LSTM uses 128-dimensional embeddings, one 256-unit recurrent layer and dropout of 0.3 on embeddings and recurrent outputs. Its state is confined to each sentence, not carried across documents or sentences.
+The neural models use the same budget-specific vocabulary mapping and permitted target set as the statistical models. They return unnormalized logits; probabilities are obtained with softmax for evaluation, while cross-entropy applies log-softmax internally during training.
 
-Training uses Adam with learning rate ![][image13], batch size 32, gradient clipping at 1.0, and a maximum of 20 epochs. Early stopping uses patience 3 on validation negative log-likelihood, retaining the best checkpoint. Brown, Gutenberg, Inaugural and Reuters use seeds 13, 42 and 2026; ROCStories and WebText use only seed 13\. There are 210 neural fits and 180 deterministic statistical model-budget evaluations, constructed from 30 shared counting passes: 390 test conditions in total. No per-corpus hyperparameter search or capacity matching is performed.
+#### **4.2.1 Context-Matched Feed-Forward Models**
+
+The context-size-1 FFNN uses one preceding token, matching the history length of a bigram. The context-size-2 FFNN uses two preceding tokens, matching a trigram history. For context length $k\in\{1,2\}$, the input embeddings are concatenated:
+
+$$
+x_t=e(w_{t-k})\mathbin{\Vert}\cdots\mathbin{\Vert}e(w_{t-1}),
+$$
+
+and transformed into output logits by
+
+$$
+z_t=\operatorname{Dropout}\!\left(\tanh(W_hx_t+b_h)\right),
+\qquad
+\ell_t=W_oz_t+b_o,
+$$
+
+with $P(w_t\mid x_t)=\operatorname{softmax}(\ell_t)$. Embeddings have dimension 128, the hidden layer has 256 units, and hidden-layer dropout is 0.3. At sentence starts, missing positions in the fixed window are left-padded with the zero-valued padding embedding. Thus the FFNNs match the statistical models' history lengths, although their learned representations and initial boundary encoding differ.
+
+#### **4.2.2 Sentence-Level LSTM**
+
+The LSTM processes the sentence prefix recurrently:
+
+$$
+(h_t,c_t)=\operatorname{LSTM}
+\left(\operatorname{Dropout}(e(w_{t-1})),(h_{t-1},c_{t-1})\right),
+$$
+
+$$
+\ell_t=W_o\operatorname{Dropout}(h_t)+b_o,
+\qquad
+P(w_t\mid w_{<t})=\operatorname{softmax}(\ell_t).
+$$
+
+It uses 128-dimensional embeddings, one recurrent layer with 256 hidden units, and dropout 0.3 on embeddings and recurrent outputs. Its hidden state is reset at every sentence boundary. Because it can use the complete preceding sentence prefix, the LSTM is a longer-context comparator rather than a context-matched bigram or trigram model.
+
+#### **4.2.3 Shared Training Protocol**
+
+All neural models minimize token-level cross-entropy with padding targets ignored and padding/BOS logits excluded from the prediction support. Training uses Adam with learning rate $10^{-3}$, batch size 32, gradient clipping at 1.0, and a maximum of 20 epochs. Early stopping uses patience 3 on validation negative log-likelihood and retains the best checkpoint. Brown, Gutenberg, Inaugural, Reuters and WebText use seeds 13, 42 and 2026; ROCStories uses only seed 13\. There are 240 neural fits and 180 deterministic statistical model-budget evaluations, constructed from 30 shared counting passes: 420 test conditions in total. No per-corpus hyperparameter search or capacity matching is performed.
 
 ### **4.3 Metrics and Seed Summaries**
 
-For ![][image14] scored target events, negative log-likelihood per event and perplexity are
+For $N$ scored target events with assigned probabilities $p_i$, negative log-likelihood per event and perplexity are
 
-![][image15]
+$$
+\mathrm{NLL}=-\frac{1}{N}\sum_{i=1}^{N}\log p_i,
+\qquad
+\mathrm{PPL}=\exp(\mathrm{NLL}).
+$$
 
-PPL includes word targets and one EOS per sentence. A single zero-probability event makes PPL infinite. Top-1 accuracy and the ordinary OOV rate use word tokens only. Accuracy for an OOV word concerns its mapped \<unk\> label, not recovery of the original spelling. Fit/train and test-scoring times are reported separately.
+PPL includes word targets and one EOS per sentence. A single zero-probability event makes PPL infinite. Top-1 accuracy and the ordinary OOV rate use word tokens only. Accuracy for an OOV word concerns its mapped \<unk\> label, not recovery of the original spelling. Context coverage is the proportion of scored events whose mapped one- or two-token history was observed in training. It differs from the nonzero-probability rate because a history may be observed even when its particular target continuation is unseen. Fit/train and test-scoring times are reported separately.
 
-Neural tables report arithmetic mean PPL and sample standard deviation where three seeds exist. ROCStories and WebText report single-run values, without an invented zero standard deviation. Deterministic n-grams have no seed standard deviation. Seed deviations measure initialization and batch-order sensitivity conditional on the fixed split, not uncertainty over documents or domains. We do not report significance tests or treat dependent token events as independent experimental replicates.
+Neural tables report arithmetic mean PPL and sample standard deviation where three seeds exist (Not every corpus is trained for all 3 seeds due to compute complexity). Deterministic n-grams have no seed standard deviation. Seed deviations measure initialization and batch-order sensitivity conditional on the fixed split, not uncertainty over documents or domains. We do not report significance tests or treat dependent token events as independent experimental replicates.
 
 ### **4.4 Event Categories, Fixed Cohort and Loss Decomposition**
 
 Every test event is assigned, in priority order, to: (1) OOV target; (2) unseen bigram with a retained target; (3) unseen trigram but seen bigram; or (4) seen trigram. Seen/unseen status comes from same-budget MLE scores on vocabulary-mapped sequences. Categories include EOS events. A retained target does not imply that every context token is retained, and a seen mapped sequence need not be a seen raw surface sequence.
 
-The fixed cohort retains non-OOV events at the 20% budget, including EOS: 109,631 Brown (89.1%), 843,843 Gutenberg (83.0%), 10,035 Inaugural (88.5%), 121,301 Reuters (91.4%), 465,770 ROCStories (97.7%) and 1,436 WebText (37.1%). The same target occurrences are evaluated at every budget. This controls cohort membership, not output support, context mapping, training composition or capacity. The particularly small WebText cohort must not stand in for its full test population.
+For the training-percentage experiment, the fixed cohort retains non-OOV events under the 20% vocabulary, including EOS: 109,631 Brown (89.1%), 843,843 Gutenberg (83.0%), 10,035 Inaugural (88.5%), 121,301 Reuters (91.4%), 465,770 ROCStories (97.7%) and 29,309 WebText (62.8%). The same target occurrences are evaluated at every training percentage. This controls cohort membership, not output support, context mapping, training composition or capacity.
 
-For the full-budget comparison, we fix one backoff model per corpus: bigram for Brown, Gutenberg and WebText; trigram for Inaugural, Reuters and ROCStories, based on lowest aggregate test PPL. This is a retrospective descriptive comparator, not a validation-selected deployment rule. For category ![][image16] with event share ![][image17], the contribution to LSTM-minus-backoff loss is
+For the primary complete-training comparison, we fix one backoff model per corpus: bigram for Brown, Gutenberg and WebText; trigram for Inaugural, Reuters and ROCStories, based on lowest aggregate test PPL. This is a retrospective descriptive comparator, not a validation-selected deployment rule. For category $k$ with event share $q_k$, the contribution to LSTM-minus-backoff loss is
 
-![][image18]
+$$
+\Delta_k=q_k\left(\overline{\mathrm{NLL}}_{\mathrm{LSTM},k}
+-\mathrm{NLL}_{\mathrm{BO},k}\right),
+\qquad
+\Delta_{\mathrm{all}}=\sum_k\Delta_k.
+$$
 
-The bar averages NLL across seeds. Negative values favor the LSTM. Unlike PPL, NLL is additive, allowing exact accounting of opposing gains and losses. We average per-seed losses directly, not the logarithm of arithmetic mean PPL.
+The overline denotes the mean NLL across seeds. Negative values favor the LSTM. Unlike PPL, NLL is additive, allowing exact accounting of opposing gains and losses. We average per-seed losses directly, not the logarithm of arithmetic mean PPL.
 
 ## **5\. Results**
 
-### **5.1 Full-Budget Comparison**
+### **5.1 Complete-Training Comparison**
 
-**Table 2\. Test perplexity at 100% training budget.** Neural values are mean \+/- sample standard deviation where three seeds exist; ROCStories and WebText are single-seed. Lower is better; bold identifies the lowest value within a corpus.
+**Table 3\. Test perplexity after training on the complete training split.** Neural values are mean \+/- sample standard deviation where three seeds exist; ROCStories is single-seed. Lower is better; bold identifies the lowest value within a corpus.
 
 | Model | Brown | Gutenberg | Inaugural |
 | :---- | ----: | ----: | ----: |
-| Bigram MLE | ![][image19] | ![][image20] | ![][image21] |
-| Trigram MLE | ![][image22] | ![][image23] | ![][image24] |
+| Bigram MLE | ∞ | ∞ | ∞ |
+| Trigram MLE | ∞ | ∞ | ∞ |
 | Bigram add-one | 1,589.2 | 11,772.1 | 2,958.7 |
 | Trigram add-one | 9,641.1 | 52,180.6 | 8,130.0 |
 | Bigram backoff | 260.0 | **914.5** | 344.3 |
@@ -173,39 +334,54 @@ The bar averages NLL across seeds. Negative values favor the LSTM. Unlike PPL, N
 | FFNN, context 2 | 246.6 \+/- 0.9 | 1,171.2 \+/- 41.6 | 422.8 \+/- 8.3 |
 | LSTM | **206.8 \+/- 0.9** | 1,053.9 \+/- 2.4 | 387.1 \+/- 17.4 |
 
-*Table 2 continued: added corpora.*
+*Table 3 continued: added corpora.*
 
-| Model | Reuters | ROCStories (one seed) | WebText (one seed) |
+| Model | Reuters | ROCStories (one seed) | WebText |
 | :---- | ----: | ----: | ----: |
-| Bigram MLE | ![][image25] | ![][image26] | ![][image27] |
-| Trigram MLE | ![][image28] | ![][image29] | ![][image30] |
-| Bigram add-one | 5,638.2 | 1,211.0 | 8,077.2 |
-| Trigram add-one | 23,001.0 | 6,476.6 | 9,380.5 |
-| Bigram backoff | 357.4 | 134.4 | **7,810.6** |
-| Trigram backoff | **291.2** | 110.4 | 7,945.4 |
-| FFNN, context 1 | 502.7 \+/- 6.3 | 140.3 | 12,211.9 |
-| FFNN, context 2 | 412.8 \+/- 5.0 | 106.8 | 13,513.4 |
-| LSTM | 308.1 \+/- 1.0 | **78.2** | 13,526.2 |
+| Bigram MLE | ∞ | ∞ | ∞ |
+| Trigram MLE | ∞ | ∞ | ∞ |
+| Bigram add-one | 5,638.2 | 1,211.0 | 9,927.8 |
+| Trigram add-one | 23,001.0 | 6,476.6 | 16,396.3 |
+| Bigram backoff | 357.4 | 134.4 | **3,396.7** |
+| Trigram backoff | **291.2** | 110.4 | 3,548.8 |
+| FFNN, context 1 | 502.7 \+/- 6.3 | 140.3 | 5,046.4 \+/- 243.4 |
+| FFNN, context 2 | 412.8 \+/- 5.0 | 106.8 | 4,976.4 \+/- 298.3 |
+| LSTM | 308.1 \+/- 1.0 | **78.2** | 5,369.9 \+/- 1,731.4 |
 
-The LSTM improves on Brown’s best backoff model by 20.5% and ROCStories’ by 29.2%. It is worse by 15.2%, 13.2%, 5.8% and 73.2% on Gutenberg, Inaugural, Reuters and WebText. LSTM is the strongest neural model at every budget in the first five corpora, but not WebText: its full-budget FFNN context 1 is the best neural model and still trails backoff by 56.4%. ROCStories’ two-token FFNN also beats trigram backoff (106.8 versus 110.4); the added neural success is not limited to LSTM. These are observed rankings, with no seed-robustness claim for the two single-seed corpora.
+The LSTM improves on Brown’s best backoff model by 20.5% and ROCStories’ by 29.2%. It is worse by 15.2%, 13.2%, 5.8% and 58.1% on Gutenberg, Inaugural, Reuters and WebText. In this complete-training comparison, LSTM is the strongest neural model on the first five corpora. On WebText, FFNN context 2 has the best neural mean and still trails bigram backoff by 46.5%. ROCStories’ two-token FFNN also beats trigram backoff (106.8 versus 110.4); the added neural success is not limited to LSTM. WebText also exposes initialization sensitivity: its LSTM PPLs are 4,249.4, 4,496.2 and 7,364.1 across seeds. ROCStories remains the only corpus for which no seed-robustness claim is possible.
 
-Accuracy does not always agree with PPL. Brown’s LSTM has the highest full-budget accuracy, 17.32%, compared with 15.38% for trigram backoff. On Inaugural, bigram add-one achieves 16.76%, above trigram backoff’s 16.20% and LSTM’s 15.25%, despite much worse PPL. Smoothing changes the probabilities assigned beyond the highest-ranked token; accuracy alone would conceal serious calibration and coverage problems.
+Accuracy does not always agree with PPL. Brown’s LSTM has the highest complete-training accuracy, 17.32%, compared with 15.38% for trigram backoff. On Inaugural, bigram add-one achieves 16.76%, above trigram backoff’s 16.20% and LSTM’s 15.25%, despite much worse PPL. Smoothing changes the probabilities assigned beyond the highest-ranked token; accuracy alone would conceal serious calibration and coverage problems.
 
-WebText is a sharper warning. Trigram add-one reports 41.41% mapped-word accuracy, but 1,442 of its 1,470 correct predictions are \<unk\> targets; only 28 of 1,803 retained words are correct (1.55%). Its 1,747 OOV words constitute 49.21% of test words. Trigram backoff has only 2.59% mapped accuracy but 5.10% accuracy on retained words. LSTM gets one retained word correct (0.06% of retained words). This is an evaluation-label effect and a substantial model failure, not evidence that add-one recovers unfamiliar lexical items.
+WebText is a sharper warning. Its 12,818 OOV words constitute 30.42% of the 42,141 test words. Trigram add-one reports 20.09% mapped-word accuracy, but 7,637 of its 8,467 correct predictions are \<unk\> targets; its retained-word accuracy is only 830/29,323 (2.83%). Bigram add-one similarly falls from 13.50% mapped accuracy to 7.71% on retained words, with 3,427 of 5,687 correct predictions coming from \<unk\>. Trigram backoff has 4.93% mapped accuracy and 7.08% retained-word accuracy, while the three-seed LSTM means are 1.58% and approximately 2.27%. All of add-one’s raw accuracy gain over the corresponding MLE model is explained by extra \<unk\>-to-\<unk\> matches. This is an evaluation-label effect, not evidence that add-one recovers unfamiliar lexical items.
 
 ### **5.2 Smoothing Ablation**
 
-Both MLE orders have infinite test PPL at every budget in all six corpora: 60 infinite test conditions. At full budget, bigram zero-probability rates are 24.7%, 41.5% and 41.0% on Brown, Gutenberg and Inaugural; corresponding trigram rates are 63.3%, 79.6% and 76.5%. Increasing context order without smoothing intensifies sparse-count failure.
+Both MLE orders have infinite test PPL in the complete-training evaluation for all six corpora. Table 4 supplements that result with the directly available zero-probability and top-1 diagnostics. Zero-probability counts use all scored events, including EOS; top-1 accuracy uses word targets only. Increasing context order without smoothing intensifies sparse-count failure.
 
-Add-one removes zeros but is much worse than backoff on the original three corpora. At full budget, corresponding-order backoff has approximately 6-55 times lower PPL across those six order-by-corpus comparisons. Gutenberg trigram add-one rises from 16,783.6 to 52,180.6 as the budget grows. Its denominator allocates a pseudocount to every allowed target, producing strong dilution when the vocabulary is large relative to a history’s observed count. Vocabulary growth is a concrete explanatory factor, although these runs do not isolate it from changing counts and domains.
+**Table 4\. Complete-training unsmoothed-baseline diagnostics.** Exact counts and word accuracies for Brown remain open until its final result bundle is restored; its previously audited rounded zero-event rates are retained provisionally.
 
-Add-one is not uniformly worse on every subset. At full budget it gives lower OOV-only PPL than backoff on Gutenberg and Inaugural. Its failure is the overall allocation of probability, not an inability to assign mass to unknown targets. Backoff should not be called the best OOV method without specifying the comparator and corpus.
+| Corpus | Bigram MLE zero events | Bigram top-1 word accuracy | Trigram MLE zero events | Trigram top-1 word accuracy |
+| :---- | ----: | ----: | ----: | ----: |
+| Brown | count pending (24.7%) | pending | count pending (63.3%) | pending |
+| Gutenberg | 422,054 / 1,017,153 (41.49%) | 125,061 / 978,972 (12.77%) | 809,886 / 1,017,153 (79.62%) | 76,630 / 978,972 (7.83%) |
+| Inaugural | 4,644 / 11,340 (40.95%) | 1,789 / 10,934 (16.36%) | 8,674 / 11,340 (76.49%) | 1,131 / 10,934 (10.34%) |
+| Reuters | 37,778 / 132,681 (28.47%) | 22,456 / 126,774 (17.71%) | 78,751 / 132,681 (59.35%) | 22,829 / 126,774 (18.01%) |
+| ROCStories | 57,689 / 476,535 (12.11%) | 67,782 / 427,651 (15.85%) | 170,129 / 476,535 (35.70%) | 73,705 / 427,651 (17.23%) |
+| WebText | 32,887 / 46,701 (70.42%) | 2,260 / 42,141 (5.36%) | 42,366 / 46,701 (90.72%) | 830 / 42,141 (1.97%) |
 
-Nor is the aggregate add-one disadvantage equally large everywhere. On WebText, bigram add-one is only 3.4% worse than bigram backoff, and trigram add-one is 18.1% worse than trigram backoff. Both beat the full-budget neural models. The original three-corpus 6-55-fold gap does not generalize to all six corpora.
+Context coverage is not retained in the aggregate metric files and therefore remains unreported unless the corresponding event exports or count models are available; it is not estimated from the zero-probability counts. The retained-target/OOV distinction is reported separately where it materially changes interpretation, most notably for WebText in Section 5.1.
 
-### **5.3 Aggregate Training-Budget Trends**
+Add-one removes zeros but is much worse than backoff on the original three corpora. With the complete training split, corresponding-order backoff has approximately 6-55 times lower PPL across those six order-by-corpus comparisons. Its denominator allocates a pseudocount to every allowed target, producing strong dilution when the vocabulary is large relative to a history’s observed count.
 
-**Table 3\. Lowest neural PPL divided by lowest backoff PPL at each budget.** LSTM supplies all cells except WebText. For WebText, the neural models at 20/40/60/80/100% are FFNN context 1, LSTM, LSTM, FFNN context 2 and FFNN context 1\. Backoff order may differ between cells. Values below one favor the neural model.
+Add-one is not uniformly worse on every subset. In the complete-training evaluation it gives lower OOV-only PPL than backoff on Gutenberg and Inaugural. Its failure is the overall allocation of probability, not an inability to assign mass to unknown targets. Backoff should not be called the best OOV method without specifying the comparator and corpus.
+
+Nor is the aggregate add-one disadvantage equally large everywhere. On the revised WebText run, bigram add-one has 2.92 times the corresponding backoff PPL and trigram add-one has 4.62 times the corresponding backoff PPL; both are also worse than every complete-training neural mean. This is less extreme than some original-corpus comparisons, but it is no longer a near tie. The raw top-1 gains described above come from unknown-label matches and do not contradict the PPL result.
+
+### **5.3 Training-Percentage Experiment: Aggregate Trends**
+
+The training-percentage experiment is separate from the primary comparison above. Each model is retrained on prefixes containing 20%, 40%, 60%, 80% and 100% of the training sentences and evaluated on the same held-out split. As discussed in Section 3.4, these labels describe sentence-count prefixes rather than equal word, document or compute budgets.
+
+**Table 5\. Lowest neural PPL divided by lowest backoff PPL at each training percentage.** LSTM supplies all cells except WebText. For WebText, the neural models at 20/40/60/80/100% are LSTM, FFNN context 1, FFNN context 2, FFNN context 1 and FFNN context 2\. Backoff order may differ between cells. Values below one favor the neural model.
 
 | Corpus | 20% | 40% | 60% | 80% | 100% |
 | :---- | ----: | ----: | ----: | ----: | ----: |
@@ -214,21 +390,19 @@ Nor is the aggregate add-one disadvantage equally large everywhere. On WebText, 
 | Inaugural | 1.323 | 1.220 | 1.186 | 1.146 | 1.132 |
 | Reuters | 1.298 | 1.181 | 1.118 | 1.108 | 1.058 |
 | ROCStories (one seed) | 0.832 | 0.776 | 0.728 | 0.710 | 0.708 |
-| WebText (one seed) | 0.738 | 1.670 | 1.405 | 1.266 | 1.564 |
+| WebText | 1.296 | 1.209 | 1.295 | 1.355 | 1.465 |
 
-Relative neural performance improves from the smallest to largest budget in five corpora, but not WebText. Gutenberg’s ratio also worsens between 80% and 100%. Reuters narrows its LSTM deficit from 29.8% to 5.8% without crossing backoff; ROCStories favors LSTM throughout. WebText instead changes from a neural advantage at 20% to a backoff advantage thereafter, and the best neural architecture changes. Its curve is a changing-model envelope, not an LSTM learning curve. Neither direction establishes a causal threshold.
+Both MLE orders remain infinite at every percentage in all six corpora, producing 60 infinite test conditions across this experiment. LSTM is the strongest neural model at every percentage in the first five corpora. On WebText it is the best neural mean only at 20%; the best neural architecture changes across later percentages as shown in the Table 5 caption.
+
+Relative neural performance improves from the smallest to largest training percentage in five corpora, but not WebText. Gutenberg’s ratio also worsens between 80% and 100%. Reuters narrows its LSTM deficit from 29.8% to 5.8% without crossing backoff; ROCStories favors LSTM throughout. Backoff wins at every WebText percentage, and its neural-to-backoff ratio worsens overall from 1.296 to 1.465 while changing direction between intermediate percentages. The WebText row is a changing-model envelope, not an LSTM learning curve. Neither direction establishes a causal threshold.
 
 Brown’s absolute LSTM PPL rises from 164.5 to 206.8 even as its advantage over backoff grows. This cannot be read as a clean deterioration from adding data: both the vocabulary and the identities of mapped targets change. The fixed-cohort results provide a more restricted comparison.
 
-![Aggregate neural-to-backoff perplexity ratios across budgets][image31]
+Add-one also illustrates why the percentage experiment is not a simple monotonic learning curve. Gutenberg trigram add-one rises from 16,783.6 to 52,180.6 from the smallest to largest prefix. Vocabulary growth is a concrete explanatory factor, although these runs do not isolate it from changing counts and domains.
 
-Aggregate neural-to-backoff perplexity ratios across budgets
+### **5.4 Training-Percentage Experiment: Fixed-Cohort Results**
 
-*Figure 1\. Descriptive aggregate PPL ratios across observed budgets. The curves do not hold vocabulary, domain composition or model capacity constant.*
-
-### **5.4 Fixed-Cohort Results**
-
-**Table 4\. PPL on the same target occurrences at 20% and 100%.** Backoff is the better order on the indicated cohort and budget, not necessarily the aggregate winner from Table 2\.
+**Table 6\. PPL on the same target occurrences at 20% and 100%.** Backoff is the better order at the indicated training percentage, not necessarily the aggregate winner from Table 3\.
 
 | Corpus | Backoff at 20% | LSTM at 20% | Backoff at 100% | LSTM at 100% | LSTM/backoff, 20% \-\> 100% |
 | :---- | ----: | ----: | ----: | ----: | ----: |
@@ -237,21 +411,21 @@ Aggregate neural-to-backoff perplexity ratios across budgets
 | Inaugural | 223.6 | 219.9 \+/- 10.1 | 169.0 | 159.4 \+/- 1.5 | 0.983 \-\> 0.943 |
 | Reuters | 261.6 | 258.1 \+/- 14.4 | 146.4 | 122.3 \+/- 4.2 | 0.986 \-\> 0.836 |
 | ROCStories (one seed) | 124.3 | 92.5 | 87.6 | 56.8 | 0.744 \-\> 0.648 |
-| WebText (one seed) | 246.4 | 256.1 | 228.1 | 277.3 | 1.039 \-\> 1.215 |
+| WebText | 312.4 | 399.7 \+/- 37.4 | 270.3 | 333.1 \+/- 21.3 | 1.280 \-\> 1.232 |
 
-Both backoff orders and LSTM improve monotonically on the fixed cohorts of Brown, Gutenberg, Inaugural, Reuters and ROCStories. Inaugural’s two-token FFNN has a small final-budget reversal, from 191.5 to 193.6. Improvement does not extend to all model families: add-one generally worsens, and MLE remains infinite. For example, Gutenberg cohort trigram add-one rises from 15,967.1 to 47,663.7 despite fixed target membership.
+Both backoff and LSTM improve from 20% to 100% on the fixed cohorts of all six corpora. Inaugural’s two-token FFNN has a small final-percentage reversal, from 191.5 to 193.6. Improvement does not extend to all model families: add-one generally worsens, and MLE remains infinite. For example, Gutenberg cohort trigram add-one rises from 15,967.1 to 47,663.7 despite fixed target membership.
 
-WebText breaks the broader improvement pattern. Its LSTM cohort PPL rises from 256.1 to 277.3, while its better backoff order improves overall from 246.4 to 228.1 but worsens slightly at the final step. Fixing target membership therefore does not remove all adverse budget effects. Domain composition, context mapping, vocabulary and stopping decisions remain confounded. Reuters and ROCStories favor LSTM on their fixed cohorts at all five budgets; the small Reuters 20% mean advantage is not a significance result.
+WebText’s fixed cohort contains 29,309 events, or 62.8% of its full test events. Its LSTM mean improves from 399.7 to 333.1, while bigram backoff improves from 312.4 to 270.3; the neural/backoff ratio narrows from 1.280 to 1.232 but never crosses one. Fixing target membership therefore removes the adverse absolute trend seen in aggregate PPL, while leaving the backoff ranking intact. Output support, mapped context, capacity and stopping decisions remain confounded. Reuters and ROCStories favor LSTM on their fixed cohorts at all five training percentages; the small Reuters 20% mean advantage is not a significance result.
 
-Gutenberg changes from a backoff advantage at 80% to an LSTM mean advantage at 100%. The three full-budget LSTM cohort PPLs are 226.8, 226.4 and 204.0 for seeds 13, 42 and 2026; all beat bigram backoff’s 229.9. However, two margins are small and the mean difference of 10.8 is less than the sample standard deviation of 13.1. This is a crossover on one selected cohort and split, not a statistically established universal threshold.
+Gutenberg changes from a backoff advantage at 80% to an LSTM mean advantage at the complete-training endpoint. The three endpoint LSTM cohort PPLs are 226.8, 226.4 and 204.0 for seeds 13, 42 and 2026; all beat bigram backoff’s 229.9. However, two margins are small and the mean difference of 10.8 is less than the sample standard deviation of 13.1. This is a crossover on one selected cohort and split, not a statistically established universal threshold.
 
 ### **5.5 Convergence, Variability and Cost**
 
-Of 210 neural fits, 207 stopped on patience and three reached the epoch cap. The capped runs are ROCStories LSTM at 60%, 80% and 100%, with best epochs 19, 19 and 20\. Its full-budget result is budget-limited, not demonstrated convergence. Reuters LSTM best epochs range from 6 to 8\. WebText LSTM selects epoch 2 at 20% and epoch 1 thereafter. Gutenberg’s FFNN best epoch is 1 throughout, with LSTM at 1-3; Brown LSTM selects 6-8 and Inaugural 9-11. Early selection is consistent with validation-domain sensitivity but does not prove later checkpoints would improve independent test performance.
+Of 240 neural fits, 237 stopped on patience and three reached the epoch cap. The capped runs are ROCStories LSTM at 60%, 80% and 100%, with best epochs 19, 19 and 20\. Its complete-training endpoint is epoch-limited, not demonstrated convergence. Reuters LSTM best epochs range from 6 to 8\. All 15 WebText LSTM runs select epoch 1 and stop after four epochs; their complete-training PPL standard deviation of 1,731.4 shows that identical stopping epochs do not imply initialization stability. Gutenberg’s FFNN best epoch is 1 throughout, with LSTM at 1-3; Brown LSTM selects 6-8 and Inaugural 9-11. Early selection is consistent with validation-domain sensitivity but does not prove later checkpoints would improve independent test performance.
 
-Full-budget LSTM parameter counts are approximately 9.76M, 29.58M, 5.07M, 21.92M, 22.83M and 4.09M for Brown, Gutenberg, Inaugural, Reuters, ROCStories and WebText. Parameters grow with vocabulary, so budget comparisons also change model capacity. Across the six-corpus sweep, neural models range from approximately 0.84M to 29.58M parameters.
+Complete-training LSTM parameter counts are approximately 9.76M, 29.58M, 5.07M, 21.92M, 22.83M and 7.51M for Brown, Gutenberg, Inaugural, Reuters, ROCStories and WebText. Parameters grow with vocabulary, so percentage comparisons also change model capacity. Across the six-corpus sweep, neural models range from approximately 0.84M to 29.58M parameters.
 
-**Table 5\. Full-budget runtime in seconds.** N-gram fitting is a shared count pass for all six variants; it must not be counted six times. LSTM times are seed means, or single-run values on ROCStories/WebText.
+**Table 7\. Complete-training runtime in seconds.** N-gram fitting is a shared count pass for all six variants; it must not be counted six times. LSTM times are seed means, except for single-seed ROCStories.
 
 | Corpus | Shared n-gram fit | LSTM train | Bigram-backoff test scoring | Trigram-backoff test scoring | LSTM test scoring |
 | :---- | ----: | ----: | ----: | ----: | ----: |
@@ -260,15 +434,15 @@ Full-budget LSTM parameter counts are approximately 9.76M, 29.58M, 5.07M, 21.92M
 | Inaugural | 0.6 | 22.1 | 0.4 | 1.2 | 0.6 |
 | Reuters | 5.9 | 251.9 | 5.3 | 18.8 | 8.8 |
 | ROCStories (one seed) | 17.5 | 3,346.8 | 17.6 | 57.1 | 34.3 |
-| WebText (one seed) | 0.3 | 13.1 | 0.1 | 0.2 | 0.2 |
+| WebText | 1.0 | 13.5 | 0.5 | 1.9 | 1.3 |
 
-Brown’s LSTM requires roughly 37 times the shared count-fit time for its 20.5% PPL improvement. ROCStories requires about 191 times the count-fit time for its 29.2% improvement; it also uses more epochs and a different environment. Summed neural training minutes are 101.4 Brown, 127.2 Gutenberg, 9.2 Inaugural, 86.2 Reuters, 333.7 ROCStories and 2.6 WebText. These totals cover 45 fits each for the first four and 15 each for the last two, excluding comparison scoring. Brown ran on Colab; the remaining corpora include Kubeflow training or recovery. Times are descriptive, not hardware-normalized efficiency estimates, and must not be interpreted as equal-compute comparisons.
+Brown’s LSTM requires roughly 37 times the shared count-fit time for its 20.5% PPL improvement. ROCStories requires about 191 times the count-fit time for its 29.2% improvement; it also uses more epochs and a different environment. Summed neural training minutes are 101.4 Brown, 127.2 Gutenberg, 9.2 Inaugural, 86.2 Reuters, 333.7 ROCStories and 6.4 WebText. These totals cover 45 fits each for Brown, Gutenberg, Inaugural, Reuters and WebText, and 15 for ROCStories, excluding comparison scoring. Brown ran on Colab; the remaining corpora include Kubeflow training or recovery. Times are descriptive, not hardware-normalized efficiency estimates, and must not be interpreted as equal-compute comparisons.
 
 ## **6\. Error Analysis and Discussion**
 
 ### **6.1 What Kind of Sparsity Favors Each Model?**
 
-**Table 6\. Full-budget category PPL: fixed backoff comparator / LSTM.** Backoff is bigram for Brown, Gutenberg and WebText; trigram for Inaugural, Reuters and ROCStories. Shares include EOS. LSTM values are seed means except the single-seed ROCStories and WebText results.
+**Table 8\. Complete-training category PPL: fixed backoff comparator / LSTM.** Backoff is bigram for Brown, Gutenberg and WebText; trigram for Inaugural, Reuters and ROCStories. Shares include EOS. LSTM values are seed means except the single-seed ROCStories result.
 
 | Category | Brown: share; BO / LSTM | Gutenberg: share; BO / LSTM | Inaugural: share; BO / LSTM |
 | :---- | :---- | :---- | :---- |
@@ -277,44 +451,44 @@ Brown’s LSTM requires roughly 37 times the shared count-fit time for its 20.5%
 | Unseen bigram, retained target | 24.1%; 12,507.1 / 7,852.8 | 32.6%; 5,059.3 / 2,883.2 | 35.4%; 3,109.7 / 1,655.4 |
 | OOV target | 5.5%; 39.2 / 40.7 | 8.9%; 2,943,011 / 28,656,791 | 5.5%; 259,996 / 7,786,237 |
 
-*Table 6 continued: added corpora.*
+*Table 8 continued: added corpora.*
 
 | Category | Reuters: share; BO / LSTM | ROCStories: share; BO / LSTM | WebText: share; BO / LSTM |
 | :---- | :---- | :---- | :---- |
-| Seen trigram | 39.3%; 17.6 / 28.1 | 64.3%; 26.9 / 24.3 | 3.5%; 216.8 / 507.2 |
-| Unseen trigram, seen bigram | 31.6%; 130.9 / 115.0 | 23.6%; 224.7 / 122.4 | 7.6%; 16.2 / 114.5 |
-| Unseen bigram, retained target | 24.9%; 14,338.1 / 4,694.5 | 11.3%; 31,998.6 / 5,657.5 | 43.7%; 2,100.0 / 1,857.9 |
-| OOV target | 4.2%; 2.85e6 / 3.40e8 | 0.8%; 2.21e7 / 4.84e10 | 45.2%; 1.04e5 / 2.66e5 |
+| Seen trigram | 39.3%; 17.6 / 28.1 | 64.3%; 26.9 / 24.3 | 9.3%; 136.8 / 243.2 |
+| Unseen trigram, seen bigram | 31.6%; 130.9 / 115.0 | 23.6%; 224.7 / 122.4 | 20.3%; 50.6 / 153.6 |
+| Unseen bigram, retained target | 24.9%; 14,338.1 / 4,694.5 | 11.3%; 31,998.6 / 5,657.5 | 43.0%; 2,488.9 / 1,988.4 |
+| OOV target | 4.2%; 2.85e6 / 3.40e8 | 0.8%; 2.21e7 / 4.84e10 | 27.4%; 3.67e5 / 1.15e6 |
 
-The consistent neural advantage is on unseen bigrams with retained targets: LSTM reduces PPL by 37.2%, 43.0%, 46.8%, 67.3%, 82.3% and 11.5% on Brown, Gutenberg, Inaugural, Reuters, ROCStories and WebText. It also beats the other backoff order on this category in each corpus. This supports generalization beyond observed mapped bigrams, not rare-word mastery or entirely known histories. The effect’s magnitude varies substantially.
+The consistent neural advantage is on unseen bigrams with retained targets: LSTM reduces PPL by 37.2%, 43.0%, 46.8%, 67.3%, 82.3% and 20.1% on Brown, Gutenberg, Inaugural, Reuters, ROCStories and WebText. It also beats the other backoff order on this category in each corpus. This supports generalization beyond observed mapped bigrams, not rare-word mastery or entirely known histories. The effect’s magnitude varies substantially.
 
-Higher-order counts remain useful where they exist. Trigram backoff has seen-trigram PPL 24.7, 27.6 and 19.2 on the original corpora, beating LSTM’s 27.0, 46.5 and 33.9; it also wins this category on Reuters and WebText. ROCStories is the exception: LSTM beats trigram backoff even on seen trigrams (24.3 versus 26.9). Thus “counts always win on memorized contexts” is not supported. Choosing the better backoff order separately for each category creates an oracle lower envelope, not a single model, and cannot reconstruct aggregate loss.
+Higher-order counts remain useful where they exist. Trigram backoff has seen-trigram PPL 24.7, 27.6 and 19.2 on the original corpora, beating LSTM’s 27.0, 46.5 and 33.9; the fixed backoff comparators also win this category on Reuters and WebText. ROCStories is the exception: LSTM beats trigram backoff even on seen trigrams (24.3 versus 26.9). Thus “counts always win on memorized contexts” is not supported. Choosing the better backoff order separately for each category creates an oracle lower envelope, not a single model, and cannot reconstruct aggregate loss.
 
 ### **6.2 Why Aggregate Rankings Reverse**
 
-**Table 7\. Contributions to LSTM-minus-backoff NLL, in nats per total test event.** Each entry is category share times the seed-mean conditional loss difference. Negative values favor LSTM. Comparators are fixed as in Table 6; rounding can affect the final digit of sums.
+**Table 9\. Contributions to LSTM-minus-backoff NLL, in nats per total test event.** Each entry is category share times the seed-mean conditional loss difference. Negative values favor LSTM. Comparators are fixed as in Table 8; rounding can affect the final digit of sums.
 
 | Category contribution | Brown | Gutenberg | Inaugural | Reuters | ROCStories | WebText |
 | :---- | ----: | ----: | ----: | ----: | ----: | ----: |
-| Seen trigram | \-0.06934 | \+0.02797 | \+0.13304 | \+0.18257 | \-0.06731 | \+0.02968 |
-| Unseen trigram, seen bigram | \-0.04864 | \+0.10623 | \+0.03651 | \-0.04131 | \-0.14337 | \+0.14881 |
-| Unseen bigram, retained target | \-0.11281 | \-0.18319 | \-0.22356 | \-0.27837 | \-0.19584 | \-0.05357 |
-| OOV target | \+0.00192 | \+0.19093 | \+0.17724 | \+0.19332 | \+0.06182 | \+0.42423 |
-| **Total** | **\-0.22887** | **\+0.14194** | **\+0.12323** | **\+0.05622** | **\-0.34469** | **\+0.54915** |
+| Seen trigram | \-0.06934 | \+0.02797 | \+0.13304 | \+0.18257 | \-0.06731 | \+0.05337 |
+| Unseen trigram, seen bigram | \-0.04864 | \+0.10623 | \+0.03651 | \-0.04131 | \-0.14337 | \+0.22513 |
+| Unseen bigram, retained target | \-0.11281 | \-0.18319 | \-0.22356 | \-0.27837 | \-0.19584 | \-0.10223 |
+| OOV target | \+0.00192 | \+0.19093 | \+0.17724 | \+0.19332 | \+0.06182 | \+0.24978 |
+| **Total** | **\-0.22887** | **\+0.14194** | **\+0.12323** | **\+0.05622** | **\-0.34469** | **\+0.42605** |
 
 On Gutenberg, non-OOV events collectively favor LSTM by 0.04899 nats per total test event, but OOV adds 0.19093, yielding a net disadvantage of 0.14194. Inaugural shows the same structure: a non-OOV gain of 0.05402 is exceeded by an OOV penalty of 0.17724. Brown’s OOV penalty is only 0.00192 and does not erase its other gains.
 
-Conditioning on full-budget non-OOV events, including EOS, gives backoff/LSTM mean PPLs of 290.2/227.3 on Brown, 414.2/392.9 on Gutenberg and 232.1/219.2 on Inaugural. These subsets differ from the 20%-vocabulary fixed cohorts in Table 4\. They reveal where losses occur, but discarding unknown targets is not a valid replacement for full-test evaluation.
+Conditioning on complete-training non-OOV events, including EOS, gives backoff/LSTM mean PPLs of 290.2/227.3 on Brown, 414.2/392.9 on Gutenberg and 232.1/219.2 on Inaugural. These subsets differ from the 20%-vocabulary fixed cohorts in Table 6\. They reveal where losses occur, but discarding unknown targets is not a valid replacement for full-test evaluation.
 
 The decomposition establishes an arithmetic explanation for the observed aggregate reversal. It does not establish how much a threshold change, synthetic unknown-word training or a new tokenizer would improve the trained models. Those interventions would alter vocabularies and training distributions and require fresh controlled experiments. Add-one’s much better OOV-only scores also show that a large unknown-word probability can be purchased at the expense of the rest of the distribution.
 
 Reuters reproduces the reversal: non-OOV contributions total \-0.13710, outweighed by \+0.19332 from OOV, giving \+0.05622 overall. ROCStories instead gains \-0.40652 on non-OOV events and loses \+0.06182 on OOV, retaining \-0.34469 overall despite conditional OOV PPL of roughly 48 billion. The OOV event share, not just its conditional PPL, determines its aggregate influence.
 
-WebText is different. Its \+0.42423 OOV contribution explains much of the \+0.54915 disadvantage, but non-OOV events also contribute \+0.12492 against LSTM. Gains on unseen bigrams do not offset losses on seen bigrams and trigrams. Removing OOV events therefore would not reverse its LSTM/backoff ranking. This is a descriptive counterexample to the OOV-only explanation, not an isolated causal test of domain shift.
+WebText is different. Its \+0.24978 OOV contribution explains much of the \+0.42605 disadvantage, but non-OOV events also contribute \+0.17627 against LSTM. Gains on unseen bigrams do not offset losses on seen bigrams and trigrams. On all complete-training non-OOV events including EOS, bigram backoff has PPL 577.6 versus LSTM seed values 681.5, 696.4 and 841.5. Removing OOV events therefore would not reverse its ranking. This is a descriptive counterexample to the OOV-only explanation, not an isolated causal test of domain shift.
 
 ### **6.3 Fifteen Illustrative Cases**
 
-These examples come from the frozen full-budget test-event exports. They were selected by diagnostic criteria rather than random sampling, so they illustrate mechanisms and counterexamples, not their prevalence. All values below are natural-log target probabilities; neural values average log probabilities across seeds. Except where stated otherwise, the count comparator is **trigram backoff** for consistency with the case exports, not the corpus-specific comparator in Tables 6-7. A larger, less negative value means greater assigned target probability.
+These examples come from the frozen complete-training test-event exports. They were selected by diagnostic criteria rather than random sampling, so they illustrate mechanisms and counterexamples, not their prevalence. All values below are natural-log target probabilities; neural values average log probabilities across seeds. Except where stated otherwise, the count comparator is **trigram backoff** for consistency with the case exports, not the corpus-specific comparator in Tables 8-9. A larger, less negative value means greater assigned target probability.
 
 1. **Brown: “vary according \-\> to”.** The trigram is absent, but according to occurs 103 times in the full training text. Trigram backoff assigns log probability \-0.05, compared with \-10.10 for trigram add-one: a well-supported shorter context prevents indiscriminate smoothing from dominating the prediction.  
 2. **Inaugural: “important branch \-\> of”.** The trigram count is zero while the final bigram count is eight. Backoff gives \-0.10 and add-one \-9.40, illustrating that even a modest number of lower-order observations can support a useful prediction when the longer context is new.  
@@ -324,25 +498,25 @@ These examples come from the frozen full-budget test-event exports. They were se
 6. **Brown: “peanut and sesame \-\> oils”.** At 20%, the target is outside the vocabulary and the LSTM scores its \<unk\> mapping at \-2.21. At 100%, oils is retained with count two and receives \-20.03; comparing these values as the same lexical task would mistake a target-support change for simple forgetting.  
 7. **Gutenberg: “my lord \-\> esau:”.** The target has zero training count and maps to \<unk\>; LSTM assigns \-22.96 versus backoff’s \-16.07. The example combines a domain-specific surface form with attached punctuation, but the scored target is the shared unknown symbol, not the name itself.  
 8. **Inaugural: “be duly \-\> appreciated”.** The target is absent from training and LSTM gives \-19.25, versus backoff’s \-11.66. With no positive \<unk\> training targets, the model’s very low unknown-symbol probability penalizes an otherwise ordinary sentence completion.  
-9. **Brown: “for god’s \-\> sake”.** The trigram count grows from zero to seven, and LSTM log probability improves from \-13.57 to \-0.17. Backoff also performs strongly at full budget (-0.11); the example shows both methods benefiting when directly relevant sequences enter the ordered training prefix.  
-10. **Inaugural: “mr. vice \-\> president,”.** The trigram grows from zero to four occurrences. LSTM improves from \-10.90 to \-4.62, yet full-budget backoff reaches \-0.21, reminding us that improvement with added text does not imply neural superiority on a newly memorized phrase.  
+9. **Brown: “for god’s \-\> sake”.** The trigram count grows from zero to seven, and LSTM log probability improves from \-13.57 to \-0.17. Backoff also performs strongly at the complete-training endpoint (-0.11); the example shows both methods benefiting when directly relevant sequences enter the ordered training prefix.
+10. **Inaugural: “mr. vice \-\> president,”.** The trigram grows from zero to four occurrences. LSTM improves from \-10.90 to \-4.62, yet complete-training backoff reaches \-0.21, reminding us that improvement with added text does not imply neural superiority on a newly memorized phrase.
 11. **Gutenberg: “o my \-\> lord,”.** The trigram grows from zero to one occurrence and the target count from one to 134\. LSTM improves from \-11.87 to \-3.67, close to backoff’s \-3.69; the shared Biblical and literary phrasing cautions against treating apparent cross-domain generalization as necessarily independent of lexical overlap.  
-12. **Gutenberg: “frank churchill was one of the \-\> boasts”.** The full-budget target is a singleton with an unseen final bigram. LSTM (-13.49), FFNN context 2 (-13.91) and trigram backoff (-14.51) all give very low probabilities; neural parameter sharing does not solve every rare-target prediction. Add-one also struggles (-11.30), but it is inaccurate to say every model is below \-13.  
+12. **Gutenberg: “frank churchill was one of the \-\> boasts”.** In the complete training split, the target is a singleton with an unseen final bigram. LSTM (-13.49), FFNN context 2 (-13.91) and trigram backoff (-14.51) all give very low probabilities; neural parameter sharing does not solve every rare-target prediction. Add-one also struggles (-11.30), but it is inaccurate to say every model is below \-13.
 13. **Reuters: “in 1985’s 4th \-\> qtr.”.** The final bigram is unseen, while qtr. has nine training occurrences. LSTM gives \-5.90 versus trigram backoff’s \-15.93 and FFNN context 2’s \-10.79. Financial context supports a strong neural advantage despite the retained punctuation-bearing target; the example does not isolate the contribution of the longer prefix.  
 14. **ROCStories: “he had lost 5 \-\> pounds.”.** The target occurs 106 times but the final bigram is absent. LSTM gives \-0.31, FFNN context 2 \-3.45 and trigram backoff \-12.01. This illustrates useful within-sentence contextual prediction, not reasoning across the preceding story sentences, because the LSTM state resets at each sentence.  
-15. **WebText: “ala. lots \-\> of”.** The trigram is unseen but lots of occurs 15 times. Trigram backoff gives \-0.05, compared with LSTM’s \-4.39 and trigram add-one’s \-9.17. A familiar shorter phrase remains useful under source shift, illustrating a non-OOV loss that cannot be explained by unknown-word supervision alone.
+15. **WebText: “against each \-\> other”.** The trigram history is unseen, but the final bigram *each other* occurs six times and the target occurs 136 times. Trigram backoff gives \-1.34, compared with the three-seed LSTM mean of \-7.69 and trigram add-one’s \-9.82. A familiar shorter phrase remains useful under source shift, illustrating a non-OOV loss that cannot be explained by unknown-word supervision alone.
 
 ### **6.4 Isolated Rare-Sequence Probe**
 
-The separate rare-list evaluation scores zero-count held-out n-grams using only their own one- or two-token histories and weights them by test frequency. On the full-budget trigram lists, FFNN context 2 achieves 587.0 versus backoff’s 710.0 on Brown. Backoff wins on Gutenberg (2,320.3 versus 2,577.3) and Inaugural (828.5 versus 899.9).
+The separate rare-list evaluation scores zero-count held-out n-grams using only their own one- or two-token histories and weights them by test frequency. On the complete-training trigram lists, FFNN context 2 achieves 587.0 versus backoff’s 710.0 on Brown. Backoff wins on Gutenberg (2,320.3 versus 2,577.3) and Inaugural (828.5 versus 899.9).
 
-The added corpora split similarly: trigram backoff beats FFNN context 2 on Reuters (1,788.8 versus 2,079.8) and WebText (9,122.4 versus 15,658.8), while the FFNN wins on ROCStories (1,076.5 versus 1,398.6). These probe rankings must remain separate from full-sentence results.
+The added corpora split similarly: trigram backoff beats FFNN context 2 on Reuters (1,788.8 versus 2,079.8) and WebText (4,991.2 versus 6,918.7 \+/- 417.2), while the FFNN wins on ROCStories (1,076.5 versus 1,398.6). These probe rankings must remain separate from full-sentence results.
 
 This probe is secondary. Its bigram and trigram lists contain different rows, and the LSTM loses its usual sentence prefix. A poor LSTM rare-list score cannot be interpreted as contradicting its full-sentence unseen-bigram advantage. The two evaluations ask different questions.
 
 ## **7\. Limitations, Ethics and Reproducibility**
 
-The experiment varies neural initialization and batch order only in four corpora, not document splits or budget orders. ROCStories and WebText have one neural seed each and do not satisfy a three-seed replication requirement. Genre, source, author and era shift alongside training size. Gutenberg has two test books; WebText has one test source. Many token observations do not substitute for independent document groups. No broad population-level significance or universal training-data threshold is claimed.
+The experiment varies neural initialization and batch order in five corpora, not document splits or budget orders. ROCStories alone has one neural seed and does not satisfy the three-seed replication used elsewhere. Genre, source, author and era shift alongside training size. Gutenberg has two test books; WebText has two test sources and only one training source. Its exact cross-split repetitions further limit its evidential role. Many token observations do not substitute for independent document groups. No broad population-level significance or universal training-data threshold is claimed.
 
 Cross-corpus PPL levels are not directly comparable because token representations and unknown-word thresholds differ. The fixed cohort holds target occurrences constant but not output support, capacity or mapped context. Brown’s rising aggregate PPL is consistent with lexical-support changes; attributing the entire rise exclusively to that mechanism would require a fixed-support control. A uniform min\_freq=2 rerun would be informative but would be a new experiment, not a correction that can be inferred from these scores.
 
@@ -350,15 +524,15 @@ Models use fixed hyperparameters, different effective contexts and unmatched par
 
 The corpora contain historical language, news, crowdsourced narratives and web material with social biases and potentially identifiable people. WebText includes personal advertisements; public availability does not remove privacy or licensing concerns. This collection is not balanced modern-language coverage. A dataset card must identify source versions, licenses and redistribution conditions for each corpus. ROCStories was obtained from an archived public mirror; the mirror’s license label must not be treated as independent verification of upstream redistribution rights. No new participant data was collected by this experiment.
 
-The frozen V3 configuration, split manifests, budget texts, training histories, scoring events and artifact manifests are the primary evidence. The 5 November audit checked the original 225 test conditions. On 6 November, all six run-level summaries were regenerated and the 165 added test conditions were reconstructed from their saved probabilities. Together the audits cover 390 conditions: 330 finite PPLs agree within relative error below ![][image32], and 60 reproduce infinite MLE PPL. Original event tables were reused with their prior audit; new category/cohort/case tables and exact per-seed decompositions were generated. All nine full-budget WebText word-accuracy metrics were independently reconstructed by known/OOV target group. This checks saved-output consistency, not independent checkpoint inference, a new leakage scan or a fresh hash audit of every artifact. No model was fitted for this update.
+Archived run configurations, split fingerprints, percentage-specific training texts, training histories, metrics and prediction exports are the primary evidence. The 5 November audit checked the original 225 test conditions. The added-corpus runs contribute 195 conditions, giving 420 overall: 360 finite PPL conditions and 60 infinite MLE conditions. The revised WebText aggregate metrics contain all 315 expected rows across five training percentages, six deterministic models, three neural variants and three seeds. All 15 complete-training WebText model/seed word-accuracy groups were independently reconstructed by known/OOV target group, and its test split was reproduced exactly from the saved fingerprints before event-category rescoring. This checks saved-output consistency and targeted checkpoint inference; it is not a fresh hash audit of every artifact or a near-duplicate leakage audit. No model was fitted for this update.
 
 ## **8\. Conclusion**
 
-Under the observed protocol, LSTM gives the best full-test PPL on Brown and ROCStories, while absolute-discount backoff leads on Gutenberg, Inaugural, Reuters and WebText. Unsmoothed n-grams fail through zero probabilities. Add-one often allocates probability poorly, although its disadvantage is small on WebText relative to the other corpora. Neither the full-test ranking nor the best neural architecture is universal.
+Under the observed protocol, LSTM gives the best full-test PPL on Brown and ROCStories, while absolute-discount backoff leads on Gutenberg, Inaugural, Reuters and WebText. Unsmoothed n-grams fail through zero probabilities. Add-one often allocates probability poorly; on WebText its corresponding-order PPL is 2.92 to 4.62 times backoff even though unknown-label matches inflate its raw accuracy. Neither the full-test ranking nor the best neural architecture is universal.
 
 The consistent descriptive LSTM advantage is on unseen mapped bigrams with retained targets across all six corpora. Backoff remains strong on observed contexts, but ROCStories shows that LSTM can also win on seen trigrams. OOV penalties outweigh non-OOV gains on Gutenberg, Inaugural and Reuters, but not ROCStories. WebText loses on both OOV and non-OOV groups and exposes the danger of interpreting mapped unknown-label accuracy as lexical recovery.
 
-LSTM fixed-cohort PPL improves from the smallest to largest budget in five corpora but worsens on WebText. Vocabulary growth and ordered exposure prevent a causal data-efficiency claim. Saved probabilities support further work on ranking reversals, validation-selected model mixtures and loss concentration without retraining the base models. Confirmatory experiments would require additional ROCStories/WebText seeds, controlled unknown-word handling, fixed support, multiple budget orders and stronger count baselines. The evidence supports conditional strengths, not a universal neural crossover threshold.
+LSTM fixed-cohort PPL improves from the smallest to largest training percentage in all six corpora, but it remains worse than backoff on WebText. Vocabulary growth and ordered exposure prevent a causal data-efficiency claim. Saved probabilities support further work on ranking reversals, validation-selected model mixtures and loss concentration without retraining the base models. Confirmatory experiments would require additional ROCStories seeds, leakage-clean WebText splits, controlled unknown-word handling, fixed support, multiple prefix orders and stronger count baselines. The evidence supports conditional strengths, not a universal neural crossover threshold.
 
 ## **References**
 
@@ -402,7 +576,7 @@ This section is an editorial work log, not part of the final paper.
 
 ### **A. Reanalysis Record**
 
-The *analysis\_and\_paper\_plan.md* now carries the six-corpus report and ranked research recommendations. The 5 November three-corpus evidence remains under its original output directory. Its nine summary files matched their predecessors byte-for-byte and nine category/cohort/case CSVs matched numerically. The 6 November update writes separately to results/paper\_v3\_six\_corpora\_20261106, retaining the old event audit and reconstructing Reuters (75 conditions), ROCStories (45) and WebText (45). New per-condition populations are 132,681, 476,535 and 3,866 events respectively. Per-seed additive loss checks passed.
+The *analysis\_and\_paper\_plan.md* carries the six-corpus report and ranked research recommendations. The 5 November three-corpus evidence remains under its original output directory. Its nine summary files matched their predecessors byte-for-byte and nine category/cohort/case CSVs matched numerically. The added-corpus evidence now comprises Reuters (75 model-budget-seed conditions), ROCStories (45) and the revised WebText run (75), with test populations of 132,681, 476,535 and 46,701 events respectively. Together with the original 225 conditions, these produce the 420-condition total used in the manuscript. The current WebText run contains all three requested neural seeds; ROCStories remains single-seed.
 
 Current six-corpus evidence:
 
@@ -414,7 +588,9 @@ Current six-corpus evidence:
 
 ·      *../../results/paper\_v3\_six\_corpora\_20261106/tables/fixed\_cohort\_per\_seed.csv*: per-seed cohort results.
 
-·      *../../results/paper\_v3\_six\_corpora\_20261106/tables/webtext\_accuracy\_decomposition.csv*: retained-word versus mapped-OOV correctness.
+·      *../../results/webtext-nn/metrics/metrics.csv* and *../../results/webtext-nn/metrics/predictions.csv*: revised three-seed aggregate metrics and event predictions used for the retained-word versus mapped-OOV accuracy audit.
+
+·      *../../results/gutenberg_neural/metrics/metrics.csv*, *event_verification.json* and the five `train_*pct` directories: complete aggregate metrics and 45 fingerprinted neural fits for Gutenberg. The local copy does not contain the event archive, incorrect/full prediction exports or cached count models named in its artifact manifest. Its archived test fingerprint matches the current local test file, but the current validation file does not match the archived validation fingerprint; event-level reconstruction therefore requires either the frozen validation file or a clearly test-only recomputation.
 
 Historical three-corpus evidence:
 
@@ -422,7 +598,7 @@ Evidence files:
 
 ·      *../../results/paper\_v3\_recheck\_20261105/reanalysis\_checks.json*: condition counts, maximum finite-PPL errors and consistency checks.
 
-·      *../../results/paper\_v3\_recheck\_20261105/tables/main\_results\_100pct.md*: full-budget results and runtimes.
+·      *../../results/paper\_v3\_recheck\_20261105/tables/main\_results\_100pct.md*: complete-training results and runtimes.
 
 ·      *../../results/paper\_v3\_recheck\_20261105/tables/full\_budget\_loss\_decomposition.csv*: per-seed NLLs, event counts, EOS counts and weighted contributions against both backoff orders.
 
@@ -430,18 +606,18 @@ Evidence files:
 
 ·      *../../results/paper\_v3\_recheck\_20261105/tables/event\_analysis\_brown.md*, *../../results/paper\_v3\_recheck\_20261105/tables/event\_analysis\_gutenberg.md*, and *../../results/paper\_v3\_recheck\_20261105/tables/event\_analysis\_inaugural.md*: all 36 selected cases and category/cohort tables.
 
-Use the **manuscript’s** interpretation of those generated reports: their boilerplate claim that the cohort “isolates added data” is too strong. Only event membership is held constant. Their category rows also retain both backoff orders; the fixed-comparator convention in Tables 6-7 is deliberate.
+Use the **manuscript’s** interpretation of those generated reports: their boilerplate claim that the cohort “isolates added data” is too strong. Only event membership is held constant. Their category rows also retain both backoff orders; the fixed-comparator convention in Tables 8-9 is deliberate.
 
-The original 5 November runtime check reread training text/configs to confirm 19,602/0/0 sub-threshold occurrences, examined 135 stop reasons, and checked split IDs and leakage-audit totals. The 6 November update verified all 210 stop reasons and the added training texts’ token counts and absence of literal \<unk\>. Neither update reran leakage detection. Results come from retained V3 artifacts, not earlier pilots.
+The original 5 November runtime check reread training text/configs to confirm 19,602/0/0 sub-threshold occurrences, examined 135 stop reasons, and checked split IDs and leakage-audit totals. The expanded experiment contains 240 neural fits; the present refresh additionally checked the revised WebText histories, metrics and training-text fingerprints. Its exact cross-split audit found the 37 repeated normalized sentence strings reported in Section 3.2, but did not rerun near-duplicate detection. Results come from the retained experiment artifacts, not earlier pilots.
 
 ### **B. Corrections to the Original Plan**
 
 | Original shorthand | Working-draft treatment |
 | :---- | :---- |
-| Backoff handles OOV best | Better than LSTM in the reported full-budget comparisons, but add-one has lower OOV-only PPL on Gutenberg/Inaugural. |
+| Backoff handles OOV best | Better than LSTM in the reported complete-training comparisons, but add-one has lower OOV-only PPL on Gutenberg/Inaugural. |
 | One “best backoff” in category tables | The original rows selected different orders. Use a fixed model for aggregate decomposition and label category-wise minima separately. |
-| Every model improves on the fixed cohort | LSTM improves monotonically in five corpora but worsens overall on WebText. Inaugural FFNN context 2 also has a reversal. Add-one generally worsens; MLE stays infinite. |
-| Neural advantage grows everywhere | Endpoint improvement holds in five corpora, not WebText; Gutenberg also has a final-step reversal. |
+| Every model improves on the fixed cohort | LSTM improves from the 20% to 100% endpoint in all six corpora. Inaugural FFNN context 2 has a reversal; add-one generally worsens and MLE stays infinite. |
+| Neural advantage grows everywhere | The aggregate best-neural/backoff ratio improves at the endpoints in five corpora, not WebText; Gutenberg also has a final-step reversal. |
 | Gutenberg early stopping proves under-training | Early best epochs are observed; validation shift is a plausible explanation requiring an ablation. |
 | \<unk\> is untrained | No positive training targets in all five threshold-one corpora; output parameters still receive softmax updates. |
 | Gutenberg validation is poetry and essays | The named files are Whitman’s *Leaves of Grass* and Chesterton’s novel *The Ball and the Cross*. |
@@ -509,7 +685,11 @@ import math
  pd.DataFrame(loss\_rows).to\_csv(output / "full\_budget\_loss\_decomposition.csv", index=False)  
  pd.DataFrame(cohort\_rows).to\_csv(output / "fixed\_cohort\_per\_seed.csv", index=False)
 
-The separate WebText accuracy export is not produced by the CLI above. To reproduce it, stream webtext-nn/metrics/scoring\_events.jsonl.gz, select source \== "test", percent \== 100 and eos \== false, then group by model and OOV status and sum the Boolean correct field. All nine models must have 3,550 word events: 1,803 retained and 1,747 OOV. Divide total correct by 3,550 to match saved accuracy and retained correct by 1,803 for retained-word accuracy. The exported columns preserve each count and denominator; no model inference is needed.
+The WebText unknown-label audit can be reproduced directly from the saved metric and prediction CSVs without loading a model or performing inference:
+
+python src/analyze\_unk\_accuracy.py results/webtext-nn \--source test \--percent 100 \--all-models \--output results/webtext-nn/metrics/unk\_accuracy\_audit.csv
+
+Each complete-training model/seed group must contain 42,141 word events: 29,323 retained targets and 12,818 OOV targets mapped to \<unk\>. Summing the Boolean correctness field separately for these groups reproduces total mapped-label and retained-word accuracy. There are 15 groups: six deterministic n-gram models and three seeds for each of the three neural architectures.
 
 ### **D. Before Submission**
 
@@ -521,9 +701,11 @@ The separate WebText accuracy export is not produced by the CLI above. To reprod
 
 ☒        Distinguish seed variation, cohort selection and causal uncertainty.
 
-☒        Reconstruct 165 newly added test conditions and WebText’s mapped-accuracy decomposition.
+☒        Reconstruct 195 added-corpus test conditions and WebText’s mapped-accuracy decomposition.
 
-☐         Add independent neural seeds for ROCStories and WebText before presenting them as replicated results; do not silently convert this task into new training.
+☐         Add independent neural seeds for ROCStories before presenting it as a replicated neural result; do not silently convert this task into new training.
+
+☐         Produce a leakage-clean WebText split and rerun it before treating WebText as confirmatory evidence.
 
 ☒        Add author names, student IDs and group identifier (Group 1).
 

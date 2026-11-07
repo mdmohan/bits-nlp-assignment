@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Evaluate saved neural and count-based LMs across available train percentages.
 
-Usage: python src/model_comparison.py <corpus>
+Usage: python src/model_comparison.py <corpus> [--check]
 
 The script discovers ``results/<run-name>/train_*pct`` folders (or a legacy
 single results folder), evaluates each saved neural checkpoint and six n-gram
@@ -486,6 +486,293 @@ def evaluate_rare_file(corpus: str, percent: float, label: str, info: dict,
     return row
 
 
+def comparison_percentages(config_path: Path, run_base: Path) -> list[float]:
+    """Use mega-run percentages when configured; otherwise inspect result folders."""
+    found = re.compile(r"^train_(\d+(?:\.\d+)?)pct$")
+    percentages = [
+        float(match.group(1))
+        for path in run_base.iterdir() if path.is_dir()
+        if (match := found.fullmatch(path.name))
+    ] if run_base.is_dir() else []
+    if not percentages and (run_base / "models").is_dir():
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        return [float(config.get("train_percent", 100))]
+
+    planned: list[float] = []
+    manifest_path = PROJECT_ROOT / "src/configs/mega-run.yaml"
+    if manifest_path.is_file():
+        try:
+            manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+            configured_runs = manifest.get("run", manifest.get("configs", []))
+            configured_names = {Path(value).name for value in configured_runs if isinstance(value, str)}
+            if config_path.name in configured_names:
+                values = manifest.get("train_percentages", manifest.get("percentages", [20, 40, 60, 80, 100]))
+                if isinstance(values, list) and values:
+                    planned = [float(value) for value in values]
+        except (OSError, TypeError, ValueError, yaml.YAMLError):
+            pass
+    if not planned and not percentages:
+        planned = [100.0]
+    return sorted(set(planned) | set(percentages))
+
+
+def expected_neural_runs(config: dict) -> list[tuple[str, str, str, int | None]]:
+    """Return (folder label, model name, seed, FFNN context size) entries."""
+    expanded = []
+    context_sizes = config.get("context_sizes")
+    for model in config.get("models", []):
+        name = str(model.get("name", "model"))
+        params = dict(model.get("params", {}))
+        if name.casefold() == "ffnn" and context_sizes:
+            for context_size in context_sizes:
+                expanded.append((name, {**params, "context_size": context_size}))
+        else:
+            expanded.append((name, params))
+
+    counts: dict[str, int] = {}
+    runs = []
+    for name, params in expanded:
+        context_size = params.get("context_size", 3) if name.casefold() == "ffnn" else None
+        label = f"ffnn_ctx{context_size}" if context_size is not None else name
+        counts[label] = counts.get(label, 0) + 1
+        folder = label if counts[label] == 1 else f"{label}_{counts[label]}"
+        for seed in config.get("seeds", [42]):
+            runs.append((folder, name, str(seed), context_size))
+    return runs
+
+
+def count_split_targets(path: Path, lowercase: bool, tokenizer: str,
+                        percent: float = 100) -> dict[str, int] | None:
+    if not path.is_file():
+        return None
+    sentences = words = 0
+    for sentence in iter_sentences(path, lowercase, percent, tokenizer):
+        sentences += 1
+        words += len(sentence)
+    return {"sentences": sentences, "word_tokens": words, "prediction_events": words + sentences}
+
+
+def count_rare_targets(path: Path, order: int, tokenizer: str) -> dict[str, int]:
+    sentences = words = events = 0
+    for _context, target, weight in rare_rows(path, order, tokenizer):
+        events += weight
+        if target == EOS:
+            sentences += weight
+        else:
+            words += weight
+    return {"sentences": sentences, "word_tokens": words, "prediction_events": events}
+
+
+def metric_key(row: dict) -> tuple[float, str, str, str, str]:
+    percent = float(row.get("percent") or 0)
+    try:
+        order = str(int(float(row.get("order") or 0))) if row.get("order") else ""
+    except (TypeError, ValueError):
+        order = str(row.get("order") or "")
+    return (
+        round(percent, 8), str(row.get("model") or ""), str(row.get("seed") or ""),
+        str(row.get("source") or ""), order,
+    )
+
+
+def check_comparison(corpus: str, expected_percentages: list[float] | None = None) -> dict:
+    """Read existing comparison CSVs and report completed versus pending evaluations."""
+    config, config_path = load_corpus_config(corpus)
+    data = config.get("data", {})
+    corpus_root = project_path(data.get("output", "data/processed")) / corpus
+    run_base = project_path(config.get("output_dir", "results")) / config.get("name", corpus)
+    metrics_path = run_base / "metrics" / "metrics.csv"
+    percentages = (
+        [float(value) for value in expected_percentages]
+        if expected_percentages is not None
+        else comparison_percentages(config_path, run_base)
+    )
+    lowercase = bool(data.get("lowercase", True))
+    tokenizer = canonical_tokenizer_name(data.get("tokenizer", "space"))
+    rare_paths = {
+        2: corpus_root / "rare-seq-bigram.csv",
+        3: corpus_root / "rare-seq-trigram.csv",
+    }
+    rare_paths = {order: path for order, path in rare_paths.items() if path.is_file()}
+
+    saved_rows: dict[tuple[float, str, str, str, str], list[dict]] = defaultdict(list)
+    csv_row_count = 0
+    if metrics_path.is_file() and metrics_path.stat().st_size:
+        try:
+            with metrics_path.open(encoding="utf-8-sig", newline="") as handle:
+                for row in csv.DictReader(handle):
+                    csv_row_count += 1
+                    try:
+                        saved_rows[metric_key(row)].append(row)
+                    except (TypeError, ValueError):
+                        continue
+        except (OSError, csv.Error) as exc:
+            print(f"Could not read {metrics_path}: {exc}")
+            return 2
+
+    print("Read-only model-comparison check (no model inference or report writes).")
+    print(f"Corpus: {corpus} | metrics rows read: {csv_row_count:,}")
+    print(f"Metrics CSV: {metrics_path}")
+    if not rare_paths and data.get("rare_check", data.get("rare-check", False)):
+        print("Rare inputs: expected by config but no rare-seq CSVs are present.")
+    elif rare_paths:
+        print("Rare inputs: " + ", ".join(path.name for path in rare_paths.values()))
+
+    models = expected_neural_runs(config)
+    if not models:
+        print("No neural models are configured; cannot determine the comparison plan.")
+        return {"complete": 0, "expected": 0, "reports_complete": False}
+
+    overall_complete = overall_expected = 0
+    issues: list[str] = []
+    split_count_cache: dict[tuple[str, bool, str, float], dict[str, int] | None] = {}
+    rare_count_cache: dict[tuple[str, int, str], dict[str, int]] = {}
+
+    def split_totals_for(path: Path, percent: float = 100) -> dict[str, int] | None:
+        cache_key = (str(path.resolve()), lowercase, tokenizer, float(percent))
+        if cache_key not in split_count_cache:
+            split_count_cache[cache_key] = count_split_targets(path, lowercase, tokenizer, percent)
+        return split_count_cache[cache_key]
+
+    def rare_totals_for(path: Path, order: int) -> dict[str, int]:
+        cache_key = (str(path.resolve()), order, tokenizer)
+        if cache_key not in rare_count_cache:
+            rare_count_cache[cache_key] = count_rare_targets(path, order, tokenizer)
+        return rare_count_cache[cache_key]
+
+    rare_requested = bool(data.get("rare_check", data.get("rare-check", False)))
+    rare_orders_expected = sorted(set(rare_paths) | ({2, 3} if rare_requested else set()))
+    if rare_requested:
+        for order in (2, 3):
+            if order not in rare_paths:
+                issues.append(f"rare-seq-{ 'bigram' if order == 2 else 'trigram' }.csv missing from {corpus_root}")
+
+    for percent in percentages:
+        percent_dir = run_base / f"train_{percent:g}pct"
+        if not percent_dir.is_dir() and (run_base / "models").is_dir():
+            percent_dir = run_base
+        snapshot = percent_dir / "train.txt"
+        train_source = snapshot if snapshot.is_file() else corpus_root / "train.txt"
+        train_percent = 100.0 if snapshot.is_file() else percent
+        split_totals = {
+            "train": split_totals_for(train_source, train_percent),
+            "valid": split_totals_for(corpus_root / "valid.txt"),
+            "test": split_totals_for(corpus_root / "test.txt"),
+        }
+        for source, totals in split_totals.items():
+            if totals is None:
+                issues.append(f"{percent:g}% {source} input file unavailable; cannot verify row totals")
+        if not snapshot.is_file():
+            issues.append(f"{percent:g}%: exact training snapshot missing ({snapshot})")
+
+        expected_units: list[tuple[tuple[float, str, str, str, str], dict[str, int] | None]] = []
+        # Statistical baselines are evaluated at orders 2 and 3, with each
+        # matching rare-sequence file included when present.
+        for spec in NGRAM_SPECS:
+            label, order = spec["name"], spec["order"]
+            for source, totals in split_totals.items():
+                expected_units.append(((round(percent, 8), label, "", source, str(order)), totals))
+            if order in rare_orders_expected:
+                expected_units.append((
+                    (round(percent, 8), label, "", "rare", str(order)),
+                    rare_totals_for(rare_paths[order], order) if order in rare_paths else None,
+                ))
+
+        # Neural evaluation rows use the saved model label and seed.
+        for folder, model_name, seed, context_size in models:
+            label = folder
+            for source, totals in split_totals.items():
+                neural_order = 2 if label.startswith("ffnn_ctx1") else 3 if label.startswith("ffnn_ctx2") else ""
+                expected_units.append((
+                    (round(percent, 8), label, seed, source, str(neural_order) if neural_order else ""),
+                    totals,
+                ))
+            if label.startswith("ffnn_ctx1"):
+                rare_orders = [2]
+            elif label.startswith("ffnn_ctx2"):
+                rare_orders = [3]
+            else:
+                rare_orders = [2, 3]
+            for order in rare_orders:
+                if order in rare_orders_expected:
+                    expected_units.append((
+                        (round(percent, 8), label, seed, "rare", str(order)),
+                        rare_totals_for(rare_paths[order], order) if order in rare_paths else None,
+                    ))
+
+        done = mismatched = 0
+        for key, expected_totals in expected_units:
+            rows = saved_rows.get(key, [])
+            if len(rows) > 1:
+                mismatched += 1
+                issues.append(f"{percent:g}% {key[1]} seed={key[2]} {key[3]} order={key[4]}: duplicate metric rows")
+                continue
+            if not rows:
+                issues.append(f"{percent:g}% {key[1]} seed={key[2]} {key[3]} order={key[4]}: metric row missing")
+                continue
+            if expected_totals is None:
+                mismatched += 1
+                issues.append(f"{percent:g}% {key[1]} seed={key[2]} {key[3]} order={key[4]}: source totals unavailable")
+                continue
+            row = rows[0]
+            observed = {}
+            try:
+                observed = {
+                    field: int(float(row[field]))
+                    for field in ("sentences", "word_tokens", "prediction_events")
+                }
+            except (KeyError, TypeError, ValueError):
+                pass
+            if observed == expected_totals:
+                done += 1
+            else:
+                mismatched += 1
+                issues.append(
+                    f"{percent:g}% {key[1]} seed={key[2]} {key[3]} order={key[4]}: "
+                    f"counts saved={observed or 'invalid'}, expected={expected_totals}"
+                )
+
+        expected_count = len(expected_units)
+        overall_complete += done
+        overall_expected += expected_count
+        pending = expected_count - done
+        print(f"  {percent:g}%: {done}/{expected_count} evaluation rows complete; {pending} pending/mismatched")
+        for folder, model_name, seed, _context in models:
+            checkpoint = percent_dir / "models" / folder / f"{model_name}_seed{seed}.pt"
+            if not checkpoint.is_file():
+                issues.append(f"{percent:g}% {folder} seed={seed}: model checkpoint missing")
+
+    print(f"Overall metrics progress: {overall_complete}/{overall_expected} complete; "
+          f"{overall_expected - overall_complete} pending/mismatched")
+    if issues:
+        print("Pending or inconsistent items:")
+        for issue in issues[:50]:
+            print(f"  - {issue}")
+        if len(issues) > 50:
+            print(f"  ... plus {len(issues) - 50} more")
+
+    report_paths = [
+        run_base / "metrics" / name for name in (
+            "metrics.csv", "perplexity_by_percentage.csv", "predictions.csv",
+            "predictions_correct.csv", "predictions_incorrect.csv", "charts.png",
+        )
+    ]
+    for percent in percentages:
+        plot_percent = f"{percent:g}".replace(".", "_")
+        report_paths.append(run_base / "metrics" / f"plot_{plot_percent}p.png")
+    missing_reports = [path.name for path in report_paths if not path.is_file() or path.stat().st_size == 0]
+    print("Final report files: " + ("all present" if not missing_reports else "missing/empty: " + ", ".join(missing_reports)))
+    complete = overall_complete == overall_expected and not missing_reports
+    print(f"Comparison status: {'COMPLETE' if complete else 'PENDING'}")
+    return {
+        "complete": overall_complete,
+        "expected": overall_expected,
+        "reports_complete": not missing_reports,
+        "missing_reports": missing_reports,
+        "all_complete": complete,
+    }
+
+
 def plot_metrics(metrics: list[dict], output_path: Path, corpus: str) -> None:
     import matplotlib
 
@@ -946,7 +1233,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("corpus", help="corpus key from src/configs and data.yaml")
     parser.add_argument("--device", help="override configured device (auto, cpu, cuda, mps)")
+    parser.add_argument(
+        "--check", action="store_true",
+        help="read existing metrics.csv and report complete versus pending evaluations without inference or writes",
+    )
     args = parser.parse_args(argv)
+    if args.check:
+        if args.device:
+            parser.error("--device does not apply with --check")
+        check_comparison(args.corpus)
+        return 0
     return run(args.corpus, args.device)
 
 

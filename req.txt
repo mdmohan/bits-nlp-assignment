@@ -1,0 +1,12 @@
+# Minimal non-Torch runtime dependencies for the project on Linux CPU.
+# Install CPU-only PyTorch separately before this file:
+# python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+nltk>=3.9
+PyYAML>=6.0
+numpy>=1.26
+pandas>=2.2
+matplotlib>=3.9
+datasketch>=1.6
+beautifulsoup4>=4.12
+langdetect>=1.0.9
+typing_extensions>=4.8

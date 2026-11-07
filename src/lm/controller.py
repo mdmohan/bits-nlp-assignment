@@ -459,15 +459,41 @@ def run_from_config(
             ).hexdigest()
             checkpoint_metadata = {"signature": signature}
 
+            reuse_saved_result = False
             if resume and result_path.is_file():
                 saved_result = json.loads(result_path.read_text(encoding="utf-8"))
                 if saved_result.get("signature") != signature:
-                    raise ValueError(
-                        f"Completed result settings do not match this run: {result_path}. "
-                        "Start a fresh run without --resume or restore the original config/data."
-                    )
+                    previous_payload = saved_result.get("signature_payload")
+                    if isinstance(previous_payload, dict):
+                        differing_fields = [
+                            key
+                            for key in sorted(set(previous_payload) | set(signature_payload))
+                            if previous_payload.get(key) != signature_payload.get(key)
+                        ]
+                    else:
+                        differing_fields = ["signature_payload (missing from saved result)"]
+                    runtime_only_differences = {"device", "torch_version"}
+                    if differing_fields and set(differing_fields) <= runtime_only_differences:
+                        previous_device = previous_payload.get("device", "unknown")
+                        previous_torch = previous_payload.get("torch_version", "unknown")
+                        print(
+                            f"Reusing completed fit {variant_label}/{run_name}; "
+                            "only runtime metadata differs "
+                            f"(device {previous_device} -> {controller.device}, "
+                            f"torch {previous_torch} -> {torch.__version__}).",
+                            flush=True,
+                        )
+                    else:
+                        difference_summary = ", ".join(differing_fields) or "unknown signature difference"
+                        raise ValueError(
+                            f"Completed result settings do not match this run: {result_path}. "
+                            f"Differing signature fields: {difference_summary}. "
+                            "Use matching model, data, and code settings, or start a fresh run without --resume."
+                        )
+                else:
+                    print(f"Skipping completed fit {variant_label}/{run_name}", flush=True)
                 result = saved_result["result"]
-                print(f"Skipping completed fit {variant_label}/{run_name}", flush=True)
+                reuse_saved_result = True
                 checkpoint_path.unlink(missing_ok=True)
                 best_checkpoint_path.unlink(missing_ok=True)
                 for stale_best in best_checkpoint_path.parent.glob(
@@ -494,10 +520,11 @@ def run_from_config(
                 result["context_size"] = context_size
             result["variant"] = variant_label
             result["train_percent"] = train_percent
-            controller._write_json_atomic(
-                result_path,
-                {"signature": signature, "signature_payload": signature_payload, "result": result},
-            )
+            if not reuse_saved_result:
+                controller._write_json_atomic(
+                    result_path,
+                    {"signature": signature, "signature_payload": signature_payload, "result": result},
+                )
             checkpoint_path.unlink(missing_ok=True)
             best_checkpoint_path.unlink(missing_ok=True)
             for stale_best in best_checkpoint_path.parent.glob(

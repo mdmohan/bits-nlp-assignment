@@ -9,6 +9,7 @@ Examples::
 
 import argparse
 import csv
+import json
 import os
 import re
 import subprocess
@@ -24,6 +25,30 @@ from lm.tokenization import canonical_tokenizer_name, tokenizer_names
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PERCENTAGES = [20, 40, 60, 80, 100]
+
+
+def ensure_nltk_punkt_tab() -> None:
+    """Ensure sentence tokenization data exists before data preparation starts."""
+    import nltk
+
+    try:
+        nltk.data.find("tokenizers/punkt_tab/english/")
+    except LookupError:
+        print("[INFO] NLTK punkt_tab data is missing; downloading it before the run.", flush=True)
+        if not nltk.download("punkt_tab", quiet=True):
+            raise RuntimeError(
+                "Could not download NLTK punkt_tab data. Check network/proxy access, "
+                "then retry or install the resource with nltk.download('punkt_tab')."
+            )
+        # Confirm the resource was installed in a location visible to this Python.
+        try:
+            nltk.data.find("tokenizers/punkt_tab/english/")
+        except LookupError as exc:
+            raise RuntimeError(
+                "NLTK reported punkt_tab download success, but the resource is still "
+                "not visible on this Python's NLTK data path."
+            ) from exc
+        print("[OK] NLTK punkt_tab data is ready.", flush=True)
 
 
 def percentage(value: str) -> float:
@@ -140,33 +165,47 @@ def verify_model_artifacts(config_path: Path, config: dict, percentages: list[fl
                 expected = directory / "models" / folder / f"{model_name}_seed{seed}.pt"
                 if not expected.is_file():
                     missing.append(str(expected))
-    if missing:
-        return missing
-
     if check_comparison:
-        comparison_root = run_root / "metrics"
-        required = [
-            comparison_root / "metrics.csv",
-            comparison_root / "charts.png",
-            comparison_root / "predictions.csv",
-            comparison_root / "predictions_correct.csv",
-            comparison_root / "predictions_incorrect.csv",
-            comparison_root / "perplexity_by_percentage.csv",
-        ]
-        missing.extend(str(path) for path in required if not path.is_file() or path.stat().st_size == 0)
-        for percent in percentages:
-            plot_percent = f"{percent:g}".replace(".", "_")
-            plot_path = comparison_root / f"plot_{plot_percent}p.png"
-            if not plot_path.is_file() or plot_path.stat().st_size == 0:
-                missing.append(str(plot_path))
-        metrics_path = comparison_root / "metrics.csv"
-        if metrics_path.is_file():
+        missing.extend(comparison_artifact_gaps(config, percentages))
+    return missing
+
+
+def comparison_artifact_gaps(config: dict, percentages: list[float]) -> list[str]:
+    """Return missing comparison outputs without changing any files."""
+    output_root = Path(config.get("output_dir", "results"))
+    if not output_root.is_absolute():
+        output_root = PROJECT_ROOT / output_root
+    comparison_root = output_root / config["name"] / "metrics"
+    required = [
+        comparison_root / "metrics.csv",
+        comparison_root / "charts.png",
+        comparison_root / "predictions.csv",
+        comparison_root / "predictions_correct.csv",
+        comparison_root / "predictions_incorrect.csv",
+        comparison_root / "perplexity_by_percentage.csv",
+    ]
+    missing = [str(path) for path in required if not path.is_file() or path.stat().st_size == 0]
+    for percent in percentages:
+        plot_percent = f"{percent:g}".replace(".", "_")
+        plot_path = comparison_root / f"plot_{plot_percent}p.png"
+        if not plot_path.is_file() or plot_path.stat().st_size == 0:
+            missing.append(str(plot_path))
+
+    metrics_path = comparison_root / "metrics.csv"
+    if metrics_path.is_file() and metrics_path.stat().st_size:
+        try:
             with metrics_path.open(encoding="utf-8", newline="") as handle:
                 rows = list(csv.DictReader(handle))
-            observed = {
-                (row.get("model"), row.get("seed", ""), row.get("source"), float(row["percent"]))
-                for row in rows if row.get("percent")
-            }
+            observed = set()
+            for row in rows:
+                if not row.get("percent"):
+                    continue
+                try:
+                    observed.add((row.get("model"), row.get("seed", ""), row.get("source"), float(row["percent"])))
+                except (KeyError, TypeError, ValueError):
+                    continue
+            variants = expected_variants(config)
+            seeds = config.get("seeds", [42])
             expected_labels = [(folder, str(seed)) for folder, _, _ in variants for seed in seeds]
             expected_labels += [
                 (label, "") for label in (
@@ -179,7 +218,132 @@ def verify_model_artifacts(config_path: Path, config: dict, percentages: list[fl
                     for source in ("train", "valid", "test"):
                         if (label, seed, source, percent) not in observed:
                             missing.append(f"metrics row: {percent:g}% {label} seed={seed} {source}")
+        except (OSError, csv.Error):
+            missing.append(f"unreadable metrics file: {metrics_path}")
     return missing
+
+
+def check_full_run(manifest_path: Path) -> None:
+    """Read-only inventory of expected full-run outputs and unfinished work."""
+    configs, percentages = load_full_manifest(manifest_path)
+    total_fits = completed_fits = resumable_fits = completed_corpora = 0
+    print("Read-only full-run check (no data preparation, training, or output writes).")
+    print(f"Manifest: {manifest_path}")
+
+    for config_path in configs:
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        corpus = config["data"]["corpus"]
+        output_root = Path(config.get("output_dir", "results"))
+        if not output_root.is_absolute():
+            output_root = PROJECT_ROOT / output_root
+        run_root = output_root / config["name"]
+        data_root = Path(config["data"].get("output", "data/processed"))
+        if not data_root.is_absolute():
+            data_root = PROJECT_ROOT / data_root
+        corpus_data = data_root / corpus
+        variants = expected_variants(config)
+        seeds = config.get("seeds", [42])
+        expected_count = len(variants) * len(seeds) * len(percentages)
+        corpus_done = 0
+        corpus_resume = 0
+        pending: list[str] = []
+
+        split_names = ("train.txt", "valid.txt", "test.txt")
+        missing_splits = [
+            name for name in split_names
+            if not (corpus_data / name).is_file() or (corpus_data / name).stat().st_size == 0
+        ]
+        rare_check_enabled = config["data"].get(
+            "rare_check", config["data"].get("rare-check", False)
+        )
+        rare_names = (
+            "rare-seq-bigram.csv", "rare-context-bigram.csv",
+            "rare-seq-trigram.csv", "rare-context-trigram.csv",
+        )
+        missing_rare = [
+            name for name in rare_names
+            if rare_check_enabled
+            and (not (corpus_data / name).is_file() or (corpus_data / name).stat().st_size == 0)
+        ]
+        data_ready = not missing_splits and not missing_rare
+
+        print(f"\n{corpus} ({config_path.name})")
+        print(f"  Data splits: {'READY' if not missing_splits else 'PENDING'}")
+        if not missing_splits:
+            print("    train.txt, valid.txt, test.txt present")
+        if missing_splits:
+            pending.extend(f"data split missing: {name}" for name in missing_splits)
+            print(f"    missing: {', '.join(missing_splits)}")
+        if rare_check_enabled:
+            print(f"  Rare-check outputs: {'READY' if not missing_rare else 'PENDING'}")
+            if missing_rare:
+                pending.extend(f"rare-check output missing: {name}" for name in missing_rare)
+                print(f"    missing: {', '.join(missing_rare)}")
+        else:
+            print("  Rare-check outputs: not requested")
+
+        for percent in percentages:
+            percent_dir = run_root / f"train_{percent:g}pct"
+            train_snapshot = percent_dir / "train.txt"
+            if not train_snapshot.is_file() or train_snapshot.stat().st_size == 0:
+                pending.append(f"{percent:g}% exact train snapshot missing")
+            percent_done = percent_resumable = 0
+            for folder, model_name, _ in variants:
+                for seed in seeds:
+                    stem = f"{model_name}_seed{seed}"
+                    model_path = percent_dir / "models" / folder / f"{stem}.pt"
+                    result_path = percent_dir / "models" / folder / f"{stem}_result.json"
+                    checkpoint_path = percent_dir / "checkpoints" / f"{folder}_{stem}.resume.pt"
+                    result_valid = False
+                    if result_path.is_file() and result_path.stat().st_size:
+                        try:
+                            stored = json.loads(result_path.read_text(encoding="utf-8"))
+                            result_valid = isinstance(stored, dict) and isinstance(stored.get("result"), dict)
+                        except (OSError, ValueError):
+                            result_valid = False
+                    if model_path.is_file() and model_path.stat().st_size and result_valid:
+                        percent_done += 1
+                        corpus_done += 1
+                    elif checkpoint_path.is_file() and checkpoint_path.stat().st_size:
+                        percent_resumable += 1
+                        corpus_resume += 1
+                        pending.append(f"{percent:g}% {folder} seed {seed}: checkpoint available; fit incomplete")
+                    else:
+                        reason = "weights exist but result is missing/invalid" if model_path.is_file() else "pending without checkpoint"
+                        pending.append(f"{percent:g}% {folder} seed {seed}: {reason}")
+            print(
+                f"  {percent:g}% models: {percent_done}/{len(variants) * len(seeds)} complete; "
+                f"{percent_resumable} resumable; "
+                f"{len(variants) * len(seeds) - percent_done - percent_resumable} not started/incomplete"
+            )
+
+        from model_comparison import check_comparison
+        comparison_progress = check_comparison(corpus, percentages)
+        comparison_ready = bool(comparison_progress.get("all_complete"))
+        if not comparison_ready:
+            pending.append(
+                "comparison pending: "
+                f"{comparison_progress.get('complete', 0)}/{comparison_progress.get('expected', 0)} "
+                "metric rows complete or final report files missing"
+            )
+        if data_ready and corpus_done == expected_count and comparison_ready and not pending:
+            completed_corpora += 1
+            print("  Overall: COMPLETE")
+        else:
+            print("  Overall: PENDING")
+        total_fits += expected_count
+        completed_fits += corpus_done
+        resumable_fits += corpus_resume
+        if pending:
+            print("  Pending work:")
+            for item in pending:
+                print(f"    - {item}")
+
+    print("\nOverall progress")
+    print(f"  Corpora complete: {completed_corpora}/{len(configs)}")
+    print(f"  Neural fits complete: {completed_fits}/{total_fits}")
+    print(f"  Neural fits with resumable checkpoints: {resumable_fits}")
+    print(f"  Neural fits pending/incomplete: {total_fits - completed_fits - resumable_fits}")
 
 
 def run_full_config(config_path: str, percentages: tuple[float, ...], resume: bool = False) -> dict:
@@ -257,6 +421,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Prepare data, train language models, and compare results.")
     parser.add_argument("config", nargs="?", help="path to a legacy YAML experiment config")
     parser.add_argument("--full", metavar="MEGA_CONFIG", help="run prepare, all configured train percentages, and model comparison for each listed corpus")
+    parser.add_argument(
+        "--check", action="store_true",
+        help="with --full, read-only inventory of completed and pending artifacts; performs no run stages",
+    )
     parser.add_argument("--parallelism", type=positive_int, default=1,
                         help="number of corpus pipelines to run in separate processes (default: 1; requires --full)")
     parser.add_argument("--suite", help="path to a prepared-document sweep YAML config")
@@ -306,24 +474,34 @@ if __name__ == "__main__":
     if args.full:
         if (args.config or args.suite or args.corpora or args.dry_run or args.stage != "preflight"
                 or args.algorithm or args.seed is not None or args.context_size is not None
-                or args.token is not None or args.train_percent != 100):
+                or args.token is not None or args.train_percent != 100
+                or (args.check and args.resume)):
             parser.error("--full cannot be combined with positional configs, --suite, or per-run overrides")
-        run_full(resolve_path(args.full), args.parallelism, resume=args.resume)
+        full_path = resolve_path(args.full)
+        if args.check:
+            check_full_run(full_path)
+        else:
+            ensure_nltk_punkt_tab()
+            run_full(full_path, args.parallelism, resume=args.resume)
     elif args.suite:
         if args.parallelism != 1:
             parser.error("--parallelism requires --full")
-        if (args.config or args.train_percent != 100 or args.algorithm or args.seed is not None
+        if (args.check or args.config or args.train_percent != 100 or args.algorithm or args.seed is not None
                 or args.context_size is not None or args.token is not None):
             parser.error("Suite settings belong in its YAML; legacy runner overrides cannot be combined with --suite")
+        ensure_nltk_punkt_tab()
         from lm.experiments import ExperimentSuite
         ExperimentSuite(args.suite, args.corpora).run(args.stage, resume=args.resume, dry_run=args.dry_run)
     else:
         if args.parallelism != 1:
             parser.error("--parallelism requires --full")
+        if args.check:
+            parser.error("--check requires --full")
         if not args.config:
             parser.error("Provide a legacy config or --suite")
         if args.corpora or args.dry_run or args.stage != "preflight":
             parser.error("--stage, --corpora and --dry-run require --suite")
+        ensure_nltk_punkt_tab()
         run_from_config(
             args.config,
             train_percent=args.train_percent,

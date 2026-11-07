@@ -28,6 +28,23 @@ PYTHONPATH=src ~/.venvs/nlp-lm/bin/python -B -m unittest discover -s src/tests -
 ~/.venvs/nlp-lm/bin/python src/run.py --suite src/configs/data_efficiency_nltk_pilot.yaml --stage all --dry-run
 ```
 
+For a minimal Linux CPU install, install PyTorch from its CPU-only wheel index,
+then install the remaining project dependencies from `req.txt`. This avoids pip
+choosing the default CUDA-enabled PyTorch wheel from PyPI. Notebook and optional
+Hugging Face packages are omitted:
+
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+python -m pip install -r req.txt
+```
+
+Use Python 3.10 or newer.
+The Python build must include the `dbm.gnu`/gdbm standard-library backend for
+the cached `shelve` corpus database; this is provided by the OS/Python package,
+not by pip.
+
 Keep the virtual environment outside cloud-synced folders. With plain `pip`,
 create the environment using `python3.12 -m venv ~/.venvs/nlp-lm`, then run
 `~/.venvs/nlp-lm/bin/python -m pip install -r src/requirements.txt`.

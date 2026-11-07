@@ -929,7 +929,17 @@ def plot_metrics(metrics: list[dict], output_path: Path, corpus: str) -> None:
     plt.close(fig)
 
 
-def plot_percentage_metrics(metrics: list[dict], output_dir: Path, corpus: str) -> list[Path]:
+def format_accuracy_percent(value: float) -> str:
+    """Format an accuracy stored as a 0-1 fraction for display."""
+    return "" if math.isnan(value) else f"{value:.1%}"
+
+
+def plot_percentage_metrics(
+    metrics: list[dict],
+    output_dir: Path,
+    corpus: str,
+    filename_suffix: str = "",
+) -> list[Path]:
     """Write fixed-percentage accuracy/perplexity comparisons like the notebook."""
     import matplotlib
 
@@ -1038,7 +1048,7 @@ def plot_percentage_metrics(metrics: list[dict], output_dir: Path, corpus: str) 
             )
             accuracy_ax.bar_label(
                 accuracy_bars,
-                labels=[f"{value:.1f}%" if not math.isnan(value) else "" for value in accuracies],
+                labels=[format_accuracy_percent(value) for value in accuracies],
                 padding=2,
                 fontsize=7,
                 rotation=90,
@@ -1092,7 +1102,7 @@ def plot_percentage_metrics(metrics: list[dict], output_dir: Path, corpus: str) 
         )
         fig.tight_layout(rect=(0, 0, 1, 0.92))
         percent_label = f"{percent:g}".replace(".", "_")
-        output_path = output_dir / f"plot_{percent_label}p.png"
+        output_path = output_dir / f"plot_{percent_label}p{filename_suffix}.png"
         fig.savefig(output_path, dpi=170, bbox_inches="tight")
         plt.close(fig)
         written.append(output_path)

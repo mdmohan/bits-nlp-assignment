@@ -318,6 +318,8 @@ The overline denotes the mean NLL across seeds. Negative values favor the LSTM. 
 
 ## **5\. Results**
 
+The locally available Reuters result folder is not yet reconciled with the frozen snapshot used for its consolidated values. Its numerical entries are retained provisionally but excluded from the figures below; the plotted results use the five aggregate exports that are currently verified.
+
 ### **5.1 Complete-Training Comparison**
 
 **Table 3\. Test perplexity after training on the complete training split.** Neural values are mean \+/- sample standard deviation where three seeds exist; ROCStories is single-seed. Lower is better; bold identifies the lowest value within a corpus.
@@ -354,15 +356,37 @@ Accuracy does not always agree with PPL. Brown’s LSTM has the highest complete
 
 WebText is a sharper warning. Its 12,818 OOV words constitute 30.42% of the 42,141 test words. Trigram add-one reports 20.09% mapped-word accuracy, but 7,637 of its 8,467 correct predictions are \<unk\> targets; its retained-word accuracy is only 830/29,323 (2.83%). Bigram add-one similarly falls from 13.50% mapped accuracy to 7.71% on retained words, with 3,427 of 5,687 correct predictions coming from \<unk\>. Trigram backoff has 4.93% mapped accuracy and 7.08% retained-word accuracy, while the three-seed LSTM means are 1.58% and approximately 2.27%. All of add-one’s raw accuracy gain over the corresponding MLE model is explained by extra \<unk\>-to-\<unk\> matches. This is an evaluation-label effect, not evidence that add-one recovers unfamiliar lexical items.
 
+Figures 1-5 visualize the complete-training comparisons for the five verified result bundles. Accuracy uses word targets, whereas perplexity includes EOS and is shown on a logarithmic scale; infinity marks an MLE condition containing at least one zero-probability event. Train, validation, test and rare bars are different evaluation populations. In particular, the rare bars summarize the separately weighted rare-sequence probe rather than another full held-out split. Neural bars are seed means without error bars, except for the single-seed ROCStories run.
+
+![Brown complete-training accuracy and perplexity](figures/brown_complete_training_20261107_224531.png)
+
+*Figure 1. Brown model comparison after complete training. Neural bars average seeds 13, 42 and 2026.*
+
+![Gutenberg complete-training accuracy and perplexity](figures/gutenberg_complete_training_20261107_195142.png)
+
+*Figure 2. Gutenberg model comparison after complete training. Neural bars average seeds 13, 42 and 2026.*
+
+![Inaugural complete-training accuracy and perplexity](figures/inaugural_complete_training_20261107_195142.png)
+
+*Figure 3. Inaugural model comparison after complete training. Neural bars average seeds 13, 42 and 2026.*
+
+![ROCStories complete-training accuracy and perplexity](figures/roc_stories_complete_training_20261107_195142.png)
+
+*Figure 4. ROCStories model comparison after complete training. Neural values come from seed 13 only.*
+
+![WebText complete-training accuracy and perplexity](figures/webtext_complete_training_20261107_195142.png)
+
+*Figure 5. WebText model comparison after complete training. Neural bars average seeds 13, 42 and 2026; mapped-word accuracy includes the \<unk\>-label effect discussed above.*
+
 ### **5.2 Smoothing Ablation**
 
 Both MLE orders have infinite test PPL in the complete-training evaluation for all six corpora. Table 4 supplements that result with the directly available zero-probability and top-1 diagnostics. Zero-probability counts use all scored events, including EOS; top-1 accuracy uses word targets only. Increasing context order without smoothing intensifies sparse-count failure.
 
-**Table 4\. Complete-training unsmoothed-baseline diagnostics.** Exact counts and word accuracies for Brown remain open until its final result bundle is restored; its previously audited rounded zero-event rates are retained provisionally.
+**Table 4\. Complete-training unsmoothed-baseline diagnostics.**
 
 | Corpus | Bigram MLE zero events | Bigram top-1 word accuracy | Trigram MLE zero events | Trigram top-1 word accuracy |
 | :---- | ----: | ----: | ----: | ----: |
-| Brown | count pending (24.7%) | pending | count pending (63.3%) | pending |
+| Brown | 30,392 / 122,985 (24.71%) | 17,741 / 116,408 (15.24%) | 77,813 / 122,985 (63.27%) | 13,452 / 116,408 (11.56%) |
 | Gutenberg | 422,054 / 1,017,153 (41.49%) | 125,061 / 978,972 (12.77%) | 809,886 / 1,017,153 (79.62%) | 76,630 / 978,972 (7.83%) |
 | Inaugural | 4,644 / 11,340 (40.95%) | 1,789 / 10,934 (16.36%) | 8,674 / 11,340 (76.49%) | 1,131 / 10,934 (10.34%) |
 | Reuters | 37,778 / 132,681 (28.47%) | 22,456 / 126,774 (17.71%) | 78,751 / 132,681 (59.35%) | 22,829 / 126,774 (18.01%) |
@@ -399,6 +423,28 @@ Relative neural performance improves from the smallest to largest training perce
 Brown’s absolute LSTM PPL rises from 164.5 to 206.8 even as its advantage over backoff grows. This cannot be read as a clean deterioration from adding data: both the vocabulary and the identities of mapped targets change. The fixed-cohort results provide a more restricted comparison.
 
 Add-one also illustrates why the percentage experiment is not a simple monotonic learning curve. Gutenberg trigram add-one rises from 16,783.6 to 52,180.6 from the smallest to largest prefix. Vocabulary growth is a concrete explanatory factor, although these runs do not isolate it from changing counts and domains.
+
+Figures 6-10 show perplexity across the five training percentages for the five verified result bundles. Each figure separates bigram- and trigram-aligned models across train, validation, test and rare populations; infinity denotes an unsmoothed condition containing zero-probability events. Neural curves are seed means without error bands, except for the single-seed ROCStories run. Reuters is omitted pending reconciliation of its result snapshot.
+
+![Brown perplexity across training percentages](figures/brown_training_percentage_20261107_224531.png)
+
+*Figure 6. Brown perplexity from 20% to 100% of the ordered training-sentence prefixes.*
+
+![Gutenberg perplexity across training percentages](figures/gutenberg_training_percentage_20261107_195142.png)
+
+*Figure 7. Gutenberg perplexity from 20% to 100% of the ordered training-sentence prefixes.*
+
+![Inaugural perplexity across training percentages](figures/inaugural_training_percentage_20261107_195142.png)
+
+*Figure 8. Inaugural perplexity from 20% to 100% of the ordered training-sentence prefixes.*
+
+![ROCStories perplexity across training percentages](figures/roc_stories_training_percentage_20261107_195142.png)
+
+*Figure 9. ROCStories perplexity from 20% to 100% of the ordered training-sentence prefixes; neural curves use seed 13 only.*
+
+![WebText perplexity across training percentages](figures/webtext_training_percentage_20261107_195142.png)
+
+*Figure 10. WebText perplexity from 20% to 100% of the ordered training-sentence prefixes.*
 
 ### **5.4 Training-Percentage Experiment: Fixed-Cohort Results**
 

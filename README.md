@@ -259,6 +259,17 @@ prediction CSVs, `charts.png` for trends across percentages, and one
 accuracy and perplexity across models and train, validation, test, and rare
 examples. See the [source guide](src/README.md#full-corpus-run) for details.
 
+To regenerate plots from an existing `metrics.csv` without loading models or
+rerunning evaluation, pass either the result folder or its metrics folder:
+
+```sh
+python src/plot.py results/gutenberg_neural
+python src/plot.py results/gutenberg_neural/metrics
+```
+
+The regenerated PNG filenames include a timestamp, so existing plots are not
+overwritten.
+
 To compare tokenizer token/type counts before a run, use:
 
 ```sh

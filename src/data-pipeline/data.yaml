@@ -130,13 +130,16 @@ corpora:
       sample-seed: 3999
 
   roc-stories:
-    title: ROC Stories (local archive)
+    title: ROCStories
     status: candidate
     language: English
     domain: Short commonsense narrative stories
     source:
-      provider: Local archive
-    version: Record the archive source/revision and access date.
+      provider: University of Rochester ROCStories; Hugging Face mirror
+      url: https://cs.rochester.edu/nlp/rocstories/
+      mirror: https://huggingface.co/datasets/mintujupally/ROCStories
+      revision: db6629716bd11c0d45bcb2fddc1b4bd6c35d8faa
+    version: Hugging Face mirror commit db6629716bd11c0d45bcb2fddc1b4bd6c35d8faa.
     license: Verify the upstream dataset license and redistribution terms before sharing.
     limitations: Short, curated stories may not represent general-purpose text.
     download:

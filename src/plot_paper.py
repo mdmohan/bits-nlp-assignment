@@ -98,10 +98,10 @@ MODEL_STYLES = {
     "lstm": dict(color="#8B1A1A", marker="^", linestyle="-"),
 }
 
-# Corrected complete-training aggregates reported in Table 4 of the paper.
-# Each value is an additive contribution to LSTM-minus-backoff NLL in nats per
-# total test event.  These retained aggregates are used because the revised
-# WebText bundle does not contain the per-event archive needed for rescoring.
+# Complete-training aggregates reported in Table 4 of the paper. Each value is
+# an additive contribution to LSTM-minus-backoff NLL in nats per total test
+# event. The WebText values were independently regenerated from its verified
+# per-event archive on 8 November 2026 and match the displayed rounded values.
 EVENT_CATEGORY_ORDER = (
     "seen_trigram",
     "unseen_trigram_seen_bigram",
@@ -729,7 +729,10 @@ def plot_event_category_contributions(
     outputs = _save_figure(fig, output_base)
     plt.close(fig)
     return outputs, {
-        "source": "Corrected complete-training Table 4 aggregates",
+        "source": (
+            "Complete-training Table 4 aggregates; WebText independently "
+            "verified from scoring_events.jsonl.gz"
+        ),
         "units": "nats per total test event",
         "difference": "LSTM minus fixed backoff NLL",
         "corpora": summaries,
@@ -1415,11 +1418,7 @@ def generate(
         "outputs": [str(path) for path in outputs],
         "accuracy_skipped": "accuracy" not in requested,
         "aggregates": aggregates,
-        "not_generated": {
-            "event_category_shares": (
-                "Revised WebText scoring-event archive is not present locally."
-            ),
-        },
+        "not_generated": {},
     }
     record_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     outputs.append(record_path)

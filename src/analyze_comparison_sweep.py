@@ -38,6 +38,14 @@ MODELS = ["bigram_mle", "trigram_mle", "bigram_laplace", "trigram_laplace",
 NEURAL = ["ffnn_ctx1", "ffnn_ctx2", "lstm"]
 BACKOFF = ["bigram_backoff", "trigram_backoff"]
 CURVE_MODELS = BACKOFF + NEURAL
+FIXED_BACKOFF = {
+    "brown": "bigram_backoff",
+    "gutenberg": "bigram_backoff",
+    "inaugural": "trigram_backoff",
+    "reuters": "trigram_backoff",
+    "roc-stories": "trigram_backoff",
+    "webtext": "bigram_backoff",
+}
 SMOOTHING = {"mle": "none (MLE)", "laplace": "add-one", "backoff": "abs. discount backoff"}
 CATEGORIES = ["seen_trigram", "unseen_trigram", "unseen_bigram", "oov_target"]
 CATEGORY_LABELS = {"seen_trigram": "seen trigram", "unseen_trigram": "unseen trigram, seen bigram",
@@ -1617,6 +1625,84 @@ def category_table(events, percents):
     return pd.DataFrame(rows)
 
 
+def full_budget_loss_decomposition(events, corpus, percent=100):
+    """Decompose LSTM-minus-backoff NLL by the mutually exclusive event categories."""
+    backoff = FIXED_BACKOFF[corpus]
+    backoff_keys = events.keys(percent, backoff)
+    if len(backoff_keys) != 1:
+        raise ValueError(f"Expected one deterministic {backoff} condition at {percent}%")
+    backoff_logp = events.seed_logps(percent, backoff)[0]
+    categories = events.categories(percent)
+    if len(categories) != len(backoff_logp):
+        raise ValueError("Category and log-probability event counts differ")
+
+    category_names = {
+        "seen_trigram": "seen_trigram",
+        "unseen_trigram": "unseen_trigram_seen_bigram",
+        "unseen_bigram": "unseen_bigram_retained_target",
+        "oov_target": "oov_target",
+    }
+    rows = []
+    for key in sorted(events.keys(percent, "lstm"), key=lambda item: item[2]):
+        lstm_logp = np.frombuffer(events.conditions[key][0], dtype=np.float32).astype(np.float64)
+        if len(lstm_logp) != len(backoff_logp):
+            raise ValueError(f"LSTM/backoff event counts differ for seed {key[2]}")
+        seed_rows = []
+        for source_name, output_name in category_names.items():
+            mask = categories == source_name
+            event_count = int(mask.sum())
+            if not event_count:
+                raise ValueError(f"No {source_name} events for {corpus} at {percent}%")
+            share = event_count / len(categories)
+            lstm_nll = -float(lstm_logp[mask].mean())
+            backoff_nll = -float(backoff_logp[mask].mean())
+            row = {
+                "corpus": corpus,
+                "budget_percent": percent,
+                "seed": key[2],
+                "category": output_name,
+                "backoff": backoff,
+                "is_full_budget_best_backoff": True,
+                "events": event_count,
+                "share": share,
+                "lstm_nll": lstm_nll,
+                "backoff_nll": backoff_nll,
+                "weighted_nll_delta": share * (lstm_nll - backoff_nll),
+            }
+            rows.append(row)
+            seed_rows.append(row)
+
+        if sum(row["events"] for row in seed_rows) != len(categories):
+            raise ValueError(f"Event categories are not exhaustive for seed {key[2]}")
+        if not math.isclose(sum(row["share"] for row in seed_rows), 1.0, abs_tol=1e-12):
+            raise ValueError(f"Event category shares do not sum to one for seed {key[2]}")
+        decomposed = sum(row["weighted_nll_delta"] for row in seed_rows)
+        overall = float(backoff_logp.mean() - lstm_logp.mean())
+        if not math.isclose(decomposed, overall, abs_tol=1e-6):
+            raise ValueError(
+                f"Loss decomposition does not reconcile for seed {key[2]}: "
+                f"{decomposed} versus {overall}"
+            )
+    return pd.DataFrame(rows)
+
+
+def summarize_loss_decomposition(rows):
+    summary = []
+    for (corpus, category), group in rows.groupby(["corpus", "category"], sort=False):
+        values = group["weighted_nll_delta"].astype(float)
+        summary.append({
+            "corpus": corpus,
+            "category": category,
+            "backoff": group.iloc[0]["backoff"],
+            "seeds": len(group),
+            "events_including_eos": int(group.iloc[0]["events"]),
+            "event_share_including_eos": float(group.iloc[0]["share"]),
+            "weighted_nll_delta_mean": float(values.mean()),
+            "weighted_nll_delta_sd": float(values.std(ddof=1)) if len(values) > 1 else math.nan,
+        })
+    return pd.DataFrame(summary)
+
+
 def cohort_table(events):
     cohort = ~events.flag(20, "bigram_mle", OOV)
     rows = []
@@ -1814,6 +1900,7 @@ def main():
         plot_summary(args.out, test, budgets, ratios, args.runs, args.corpora)
         print(f"Wrote summary tables and figures to {args.out}", flush=True)
     if args.events:
+        loss_frames = []
         for corpus in args.corpora:
             run_dir = args.runs / RUN_DIRS[corpus]
             print(f"{corpus}: streaming test scoring events ...", flush=True)
@@ -1826,8 +1913,14 @@ def main():
             cohort.to_csv(args.out / "tables" / f"fixed_cohort_{corpus}.csv", index=False)
             cases = add_train_counts(select_cases(events, args.cases_per_type), run_dir)
             cases.to_csv(args.out / "tables" / f"rare_unseen_cases_{corpus}.csv", index=False)
+            loss_frames.append(full_budget_loss_decomposition(events, corpus))
             write_event_report(args.out, corpus, categories, cohort, cases, budgets)
             print(f"{corpus}: wrote event analysis ({len(cases)} cases)", flush=True)
+        loss_rows = pd.concat(loss_frames, ignore_index=True)
+        loss_rows.to_csv(args.out / "tables" / "full_budget_loss_decomposition.csv", index=False)
+        summarize_loss_decomposition(loss_rows).to_csv(
+            args.out / "tables" / "full_budget_loss_seed_summary.csv", index=False
+        )
 
 
 if __name__ == "__main__":

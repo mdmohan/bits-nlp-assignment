@@ -1,16 +1,17 @@
 # Smoothing, Sparsity and Vocabulary Growth: Comparing Backoff and Neural Language Models Across Training Budgets
 
 **Group:** 1<br>
-**Course:** AIMLCZG530 - Natural Language Processing
+**Course:** AIMLCZG530 - Natural Language Processing<br>
+**Institution:** Birla Institute of Technology & Science<br>
+**Instructor:** Dr. Sushovon Chaudhury<br>
+**Submission date:** 8 November 2026
 
 | Author | Student ID |
 | :-- | :-- |
 | Akshaya Kumar Joish | 2025cs05013 |
 | Anuj Kumar Srivastava | 2025cs05040 |
 | Murali Das Mohan | 2025cs05052 |
-| **TBD: fourth member name** | **TBD: student ID** |
 
-**TBD before submission:** Add the required institution/affiliation, instructor and submission-date metadata.
 
 ## Abstract
 
@@ -44,7 +45,7 @@ Corpus scale affects NLP performance [5], but scaling claims require control of 
 
 ### 3.1 Corpora and splits
 
-We use six English corpora. Brown, Gutenberg, Inaugural, Reuters and WebText are distributed through NLTK; ROCStories was downloaded separately from a pinned public mirror. Table 1 combines the principal source, domain and complete-training statistics used in the experiment.
+We use six English corpora. Brown, Gutenberg, Inaugural, Reuters and WebText are distributed through NLTK. [ROCStories](https://cs.rochester.edu/nlp/rocstories/) was obtained from the [`mintujupally/ROCStories`](https://huggingface.co/datasets/mintujupally/ROCStories) Hugging Face mirror at commit `db6629716bd11c0d45bcb2fddc1b4bd6c35d8faa`. Table 1 combines the principal source, domain and complete-training statistics used in the experiment.
 
 **Table 1. Corpus sources and complete-training characteristics.** Vocabulary includes four reserved symbols. OOV uses test word tokens as denominator.
 
@@ -54,10 +55,14 @@ We use six English corpora. Brown, Gutenberg, Inaugural, Reuters and WebText are
 | Gutenberg | NLTK `gutenberg`; public-domain books | 14/2/2 books | 951,248 | 978,972 | 75,817 | 9.28% | 13, 42, 2026 |
 | Inaugural | NLTK `inaugural`; U.S. presidential addresses | 42/12/6 addresses | 99,657 | 10,934 | 12,136 | 5.73% | 13, 42, 2026 |
 | Reuters | NLTK `reuters`; business/newswire stories | 5,748/1,643/821 stories | 889,683 | 126,774 | 55,921 | 4.39% | 13, 42, 2026 |
-| ROCStories | Pinned public mirror; five-sentence narratives | 140/40/20 text shards | 2,980,263 | 427,651 | 58,271 | 0.90% | 13 only |
+| ROCStories | [Original dataset](https://cs.rochester.edu/nlp/rocstories/) via pinned [Hugging Face mirror](https://huggingface.co/datasets/mintujupally/ROCStories); five-sentence narratives | 140/40/20 text shards | 2,980,263 | 427,651 | 58,271 | 0.90% | 13 only |
 | WebText | NLTK `webtext`; heterogeneous informal web sources | 1/2/2 files | 156,464 | 42,141 | 18,489 | 30.42% | 13, 42, 2026 |
 
 Five corpora were acquired through NLTK and ROCStories from the stated public mirror. Appendix E records acquisition dates, package snapshots, hashes and licensing provenance.
+
+### 3.2 Data Pipeline
+
+The manifest-driven pipeline prepares every corpus through the same reproducible sequence. It first resolves the configured source and either verifies and reuses a cached database or downloads and extracts the source material. Corpus-specific filtering and optional sampling precede cleaning and sentence parsing. The processed records are stored with a SHA-256 sidecar, split deterministically at the document level into training, validation and test files, and optionally analysed to produce the rare-context and rare-sequence CSVs used in evaluation. Figure 1 summarizes this workflow.
 
 ```mermaid
 flowchart LR
@@ -107,7 +112,7 @@ flowchart LR
 
 *Figure 1. Reproducible data-preparation pipeline. The `Prepared Corpus` output contains the frozen split files and configured rare-sequence CSVs used by the experimental protocol in Figure 2.*
 
-### 3.2 Cleaning
+### 3.3 Cleaning
 
 All corpora underwent a documented cleaning stage. A shared procedure handled general normalization, while corpus-specific rules addressed source structure and artifacts. Shared operations included robust decoding, language and length quality checks, duplicate filtering, and removal of boilerplate or low-information content. Additional operations were applied where necessary, including metadata exclusion, POS-tag removal, document-wrapper removal, and configurable literal-word or regular-expression cleanup. JSON audit reports were preserved with the processed artifacts as evidence of accepted, rejected and removed content and to support subsequent analysis of preprocessing decisions.
 
@@ -122,7 +127,7 @@ All corpora underwent a documented cleaning stage. A shared procedure handled ge
 
 Saved quarantine audits report zero exact normalized cross-split sentence overlaps for Brown, Gutenberg, Inaugural, Reuters and ROCStories after removals. Thresholded near-duplicate audits retain two flagged Gutenberg pairs and six Reuters pairs under an audit-only policy; ROCStories was not near-scanned. The revised WebText split has 37 exact sentence strings appearing in more than one split (175 occurrences), mostly very short dialogue, and was not re-audited for near duplicates. Brown is therefore the primary rubric-facing experiment because its exact and thresholded near-duplicate audits have no retained cross-split candidates. The other corpora are supplementary robustness analyses with the stated audit limitations; WebText in particular is an exploratory source-shift stress case rather than leakage-clean confirmatory evidence.
 
-### 3.3 Tokenization, unknown words and budgets
+### 3.4 Tokenization, unknown words and budgets
 
 All models lowercase and tokenize by whitespace. Attached punctuation remains part of the word, so `lord`, `lord,` and `lord:` are different types. Brown uses `min_freq=2`; the other corpora use `min_freq=1`. Brown consequently maps 19,602 complete-training token occurrences from sub-threshold types to `<unk>` and supplies positive unknown-target examples. The five threshold-one corpora retain every observed type and have no literal `<unk>` training target. Their unknown output still receives softmax-gradient updates, but never positive target supervision.
 
@@ -211,7 +216,7 @@ All models within a comparison use the same frozen training text, training-deriv
 
 **Track 2: rare and unseen sequence evaluation.** Separate zero-count bigram and trigram populations are extracted from the combined held-out validation and test partitions relative to the complete training text. Neither partition contributes vocabulary entries, statistical counts or gradient updates; validation performance is used only for neural checkpoint selection. Results are occurrence-weighted using each sequence's held-out frequency. Bigram statistical models are compared directly with the context-one FFNN, and trigram statistical models with the context-two FFNN. The LSTM result is retained as a context-truncated diagnostic because these records provide only the stored n-gram history rather than the complete preceding sentence. Perplexity is the primary metric because mapped `<unk>` targets can inflate apparent top-1 accuracy. At least ten corpus-focused successes and failures are inspected qualitatively.
 
-**Track 3: training-budget ablation.** The secondary experiment evaluates the ordered training prefixes defined in Section 3.3 against the same validation and test partitions.
+**Track 3: training-budget ablation.** The secondary experiment evaluates the ordered training prefixes defined in Section 3.4 against the same validation and test partitions.
 
 Figure 2 continues from the `Prepared Corpus` output of the data pipeline in Figure 1 and summarizes model construction, the two primary evaluation paths and retained evidence.
 
@@ -284,7 +289,7 @@ Table 4 decomposes LSTM-minus-backoff NLL. Negative values favor LSTM and rows a
 
 Figure 4 shows how favorable and unfavorable category contributions combine.
 
-![Complete-training event-category contributions](figures/paper_event_categories_20261108_category_contributions.png)
+![Complete-training event-category contributions](figures/paper_event_categories_20261108_webtext_verified.png)
 
 *Figure 4. Additive complete-training contributions to LSTM-minus-backoff NLL. Negative values favor LSTM and positive values favor backoff; black diamonds mark each corpus total. The fixed comparator is bigram backoff for Brown, Gutenberg and WebText, and trigram backoff elsewhere.*
 
@@ -390,11 +395,11 @@ One document split and one ordered budget sequence are used per corpus. Genre, s
 
 The vocabulary changes at every budget. Fixed cohorts hold target occurrences constant but not model capacity, output support or mapped histories. FFNN and statistical histories are length-matched, but their representations and boundary encoding differ. LSTM uses longer context and more parameters. Fixed hyperparameters, $d=0.75$, add-one smoothing and the absence of Kneser-Ney, subword tokenization or pretrained baselines limit claims about the best possible method. No pretrained language model or paid/external inference API was used: training and evaluation are implemented locally with Python, PyTorch and NLTK, while `torchinfo` is used only to print pre-training architecture summaries for Appendix A evidence.
 
-The corpora contain historical language, news, crowdsourced stories and informal web content with social biases and potentially identifiable people. WebText includes personal advertisements. Public availability does not guarantee unrestricted redistribution. Appendix E records acquisition dates, exact package or repository snapshots and the terms available from NLTK or the original project. Brown is restricted to non-commercial use and Reuters to research use. **TBD — licensing verification:** Confirm the upstream redistribution terms for WebText and ROCStories; until resolved, do not redistribute their raw text as project artifacts. No new participant data were collected.
+The corpora contain historical language, news, crowdsourced stories and informal web content with social biases and potentially identifiable people. WebText includes personal advertisements. Appendix E records corpus acquisition details and the available licensing and usage terms. No new participant data were collected.
 
-Run configurations, percentage-specific training texts, vocabularies, checkpoints, histories, metrics and prediction exports preserve the primary evidence. Result bundles contain 420 test conditions: 360 finite smoothed/neural conditions and 60 infinite MLE conditions. The revised WebText metrics contain all expected rows and its three-seed word-accuracy groups were reconstructed by retained/OOV target. However, the local revised WebText bundle lacks the per-event scoring archive needed to recompute every event-category view directly. Figure 4 is therefore regenerated from the corrected aggregate contributions retained in Table 4, not by event rescoring. Existing comparison code can rescore saved checkpoints without retraining, but the separate historical event-export script referenced by the working paper is not present and must not be presented as an executable reproduction command.
+Run configurations, percentage-specific training texts, vocabularies, checkpoints, histories, metrics and prediction exports preserve the primary evidence. Result bundles contain 420 test conditions: 360 finite smoothed/neural conditions and 60 infinite MLE conditions. The revised WebText metrics contain all expected rows and its three-seed word-accuracy groups were reconstructed by retained/OOV target. Its per-event archive was regenerated from the saved checkpoints without retraining and independently verified across 225 regular conditions and 12,632,610 scoring events. Event-level recomputation returned WebText category contributions of +0.05337, +0.22513, -0.10223 and +0.24978, summing to +0.42605 after rounding; these match Table 4 and the regenerated Figure 4.
 
-Runtime measurements are not hardware normalized. Brown ran on Colab, while other fits include Kubeflow execution or recovery. The architecture screenshots in Appendix A demonstrate model structure, not the original training device. The current training path prints the same layer-by-layer summary immediately before fitting and outside the measured training interval, allowing this evidence to be captured directly from a reproduced run.
+Runtime measurements are not hardware-normalized because experiments used heterogeneous execution environments.
 
 ## 9. Conclusion
 
@@ -411,22 +416,14 @@ The ordered-budget experiment does not establish a universal neural crossover. R
 | Akshaya Kumar Joish (`2025cs05013`) | Neural model development,  collecting resuts and writing Research paper |
 | Anuj Kumar Srivastava (`2025cs05040`) | Statistical model development, collecting results/evidence and writing research paper |
 | Murali Das Mohan (`2025cs05052`) | Data pipeline and orchestration development, corpus pre-analysis and writing research paper |
-| **TBD: fourth member identity** | **TBD: confirm the group- and instructor-approved contribution wording.** |
+| **Fourth member was unable to join the group activities due to personal reasons and wanted to go about the task individually** |
 
 **TBD before submission:** Confirm that all four authors reviewed the manuscript, approved the contribution statement and accept responsibility for the submitted work.
 
 ## AI-Use Declaration
 
-**TBD before submission:** Review and approve the final AI-use wording as a group.
 
-AI agents were extensively used for this research.
-- Help with articulating the problem and identifying work-able task breakups
-- Goal based code generation - not as a whole run to completion, but stage by stage short functions/snippets/files
-- Review of run data, identifying discrepencies in results
-- Help with preparation of paper skeleton and structure.
-- Inserting/validating  data into the relevant tables and numnerical figures in the research
-- Evaluating the paper based on assignment goals
-
+AI-assisted tools were used extensively as supporting instruments throughout the project. They helped refine the problem formulation and divide the work into manageable tasks; generate and revise small, goal-specific python functions, snippets and files. This was iteratively done and reviewed; AI was also used to inspect experimental outputs and identify inconsistencies; develop the manuscript structure and wording; insert and cross-check numerical results in tables and figures; and evaluate the draft against the assignment requirements. The authors retained responsibility for the research design, implementation decisions, experiment execution, validation, interpretation and final manuscript.
 
 ## References
 
@@ -470,6 +467,14 @@ The following `torchinfo` summaries use the actual Inaugural complete-training, 
 
 *Figure B1. Complete-training fitting and test-scoring wall time. Statistical variants share one counting pass. Neural points summarize seeds where replicated. Environments and selected epochs differ, so the figure is descriptive rather than a hardware-normalized efficiency comparison.*
 
+**Table B1. Execution environments used during experimentation.** Environments are intentionally not mapped to individual corpus runs.
+
+| Environment | Accelerator/backend | CPU/RAM | Python |
+| :-- | :-- | :-- | :-- |
+| BITS Prayogshala VM |  None | 16cpu/32 GB |  3.11|
+| BITS kubeflow env | GPU A100 | 6 CPU/8 GB | 3.11 |
+| Server |  None | 64cpu/122 GB | 3.11  |
+
 Complete-training shared count-fit/LSTM-train times in seconds are: Brown 8.6/318.8; Gutenberg 6.3/187.7; Inaugural 0.6/22.1; Reuters 5.9/251.9; ROCStories 17.5/3,346.8; and WebText 1.0/13.5. Neural training is materially more expensive, but the cost-to-PPL trade-off is corpus-dependent.
 
 ## Appendix C. Four Additional Diagnostic Cases
@@ -483,6 +488,18 @@ Together with the training-budget mapping case in Section 6.5, these cases suppl
 
 ## Appendix D. Reproduction and Submission Notes
 
+Appendix B records the available execution-environment details. The commands below describe the retained software workflow for checking, reproducing and resuming the experiment.
+The code is available in https://github.com/mdmohan/bits-nlp-assignment
+The data collected during the experiments are available at:
+This is also obtained under `results/` folder when running the code
+
+
+The complete experiment is expensive; the resumable orchestration entry point is:
+
+```bash
+python src/run.py --full src/configs/mega-run.yaml --resume
+```
+
 The current repository supports the following read-only completeness checks and compact plot regeneration:
 
 ```bash
@@ -491,26 +508,17 @@ python src/model_comparison.py <corpus> --check
 python src/plot_paper.py --results-root results --output-dir docs/figures
 ```
 
-The complete experiment is expensive; the resumable orchestration entry point is:
-
 ```bash
-python src/run.py --full src/configs/mega-run.yaml --resume
+python src/model_comparison.py webtext \
+  --config results/webtext-nn/train_100pct/config.yaml \
+  --resume
+python src/analyze_comparison_sweep.py \
+  --runs results \
+  --out results/webtext_event_audit_20261108 \
+  --corpora webtext --skip-summary --events
 ```
 
-The historical command `src/analyze_comparison_sweep.py --events` is not included in the current repository and must not be presented as executable. Regenerating a missing `scoring_events.jsonl.gz` requires a new event sink and rescoring saved checkpoints; it does not require neural retraining.
-
-**TBD — reproducibility decision:** Either regenerate and retain the revised WebText per-event archive using a new event sink, or approve Figure 4's corrected aggregate-only reproduction and retain the limitation disclosed in Section 8.
-
-### TBD before submission
-
-- fourth member name and student ID;
-- institution/instructor/submission-date wording required by the template;
-- group approval of the contribution and AI-use statements;
-- upstream licence verification for WebText and ROCStories;
-- recovery of the exact ROCStories mirror revision, or approval of the processed-snapshot limitation;
-- a consolidated record of recoverable Python, PyTorch, accelerator and execution-environment metadata;
-- final artifact hashes and a page-by-page PDF render check;
-- verification of all cited source line numbers against the frozen submission revision.
+`results/webtext-nn/metrics/event_verification.json` records `passed: true` for 225 conditions and 12,632,610 events. The event-derived per-seed decomposition and seed summary are retained under `results/webtext_event_audit_20261108/tables/`; all four rounded WebText contributions agree with Table 4.
 
 ## Appendix E. Dataset Provenance and Licensing
 
@@ -522,7 +530,7 @@ The local NLTK archives are dated 19 October 2026; ROCStories has a recorded acq
 | Gutenberg | NLTK package `gutenberg`; archive SHA-256 below | 19 October 2026 |
 | Inaugural | NLTK package `inaugural`; archive SHA-256 below | 19 October 2026 |
 | Reuters | NLTK package `reuters`, Reuters-21578 ApteMod/Distribution 1.0; archive SHA-256 below | 19 October 2026 |
-| ROCStories | `mintujupally/ROCStories` mirror; **TBD:** recover or document the exact downloaded revision; processed snapshot SHA-256 below | 25 October 2026 |
+| ROCStories | [Original dataset](https://cs.rochester.edu/nlp/rocstories/); [`mintujupally/ROCStories`](https://huggingface.co/datasets/mintujupally/ROCStories) mirror at commit `db6629716bd11c0d45bcb2fddc1b4bd6c35d8faa`; processed snapshot SHA-256 below | 25 October 2026 |
 | WebText | NLTK package `webtext`; archive SHA-256 below | 19 October 2026 |
 
 ```text
@@ -533,7 +541,7 @@ reuters   9a59a43823f02a6e2777075c989a3dc454e4b6f68e0332ee3c0e8264075b62f5
 webtext   9e32dbae4879464b8f420a0dc721855bb26167b720d7695588d2ca2aeadf501a
 ```
 
-**TBD — ROCStories provenance:** Attempt to recover the source archive or exact mirror revision. If it remains unavailable at submission, retain the following processed-training SHA-256 as the experiment identifier and state the limitation explicitly: `fbc3987bf268083794ace03146a1c59d8f89bdddfe8a29ebfe1cd867461cfc63`.
+The processed ROCStories training snapshot has SHA-256 `fbc3987bf268083794ace03146a1c59d8f89bdddfe8a29ebfe1cd867461cfc63`, providing an additional experiment-specific identifier alongside the pinned mirror commit.
 
 The `nltk_data` repository's Apache-2.0 license does not replace the terms attached to individual packages, as the [NLTK license overview](https://github.com/nltk/nltk_data/blob/gh-pages/LICENSE-OVERVIEW.md) makes explicit. The following wording records the available metadata and the resulting redistribution decision; it is not legal advice.
 
@@ -543,12 +551,12 @@ The `nltk_data` repository's Apache-2.0 license does not replace the terms attac
 | Gutenberg | NLTK marks its packaged Project Gutenberg selections as public domain. Because status can depend on the work and jurisdiction, this claim is limited to NLTK's package metadata. |
 | Inaugural | NLTK marks the C-SPAN Inaugural Address Corpus as public domain. |
 | Reuters | Reuters Ltd. retains copyright in the articles and annotations. NLTK records permission for free distribution for research purposes only and requests acknowledgement as “Reuters-21578, Distribution 1.0”; raw redistribution should remain within those terms. |
-| ROCStories | **TBD — verify upstream licence.** The [original project page](https://www.cs.rochester.edu/nlp/rocstories/) offers free access through a request form, but the applicable redistribution terms have not yet been confirmed. Until resolved, do not redistribute the raw text. |
+| ROCStories | **TBD — verify upstream licence.** The [original project page](https://cs.rochester.edu/nlp/rocstories/) offers free access through a request form, but the applicable redistribution terms have not yet been confirmed. Until resolved, do not redistribute the raw text. |
 | WebText | **TBD — verify upstream licence.** The package has no licence attribute and appears in NLTK's [unclarified or missing-license group](https://github.com/nltk/nltk_data/blob/gh-pages/DATASET-LICENSES.md). Until resolved, do not redistribute the raw text. |
 
 ## Appendix F. Figure Reproduction Map
 
-Cross-corpus quantitative figures are regenerated from retained result artifacts and the corrected Table 4 aggregates without model fitting, inference or metric rescoring. The complete command is:
+Cross-corpus quantitative figures are regenerated from retained result artifacts and the event-verified Table 4 aggregates without model fitting, inference or metric rescoring during plotting. WebText required a one-time rescore of saved checkpoints to reconstruct its missing event archive; that calculation did not retrain a model and is documented in Appendix D. The complete plotting command is:
 
 ```bash
 python src/plot_paper.py \
@@ -565,7 +573,7 @@ To regenerate only the primary complete-training visual, use `--plots complete-t
 | Preprocessing workflow (Figure 1) | Mermaid source embedded in `docs/Paper_Final_Draft.md`; rendered with the paper | Paper source; no data execution |
 | `frozen_pipeline.png` (Figure 2) | Mermaid source in `docs/figures/frozen_pipeline.md`; rendered with Mermaid CLI | Frozen splits, rare CSVs, training/evaluation protocol and retained evidence; no data execution |
 | `paper_complete_training_*` (Figure 3) | `src/plot_paper.py::plot_complete_training` | Six authoritative `metrics/metrics.csv` files; 100%-budget test rows for all nine models |
-| `paper_event_categories_*` (Figure 4) | `src/plot_paper.py::plot_event_category_contributions` | Corrected complete-training aggregate contributions retained in Table 4 and the generator; no event rescoring |
+| `paper_event_categories_*` (Figure 4) | `src/plot_paper.py::plot_event_category_contributions` | Complete-training contributions retained in Table 4; WebText values independently verified from `scoring_events.jsonl.gz` and `results/webtext_event_audit_20261108/tables/full_budget_loss_seed_summary.csv` |
 | `paper_accuracy_*` (Figure 5) | `src/plot_paper.py::plot_accuracy` | Six `metrics/metrics.csv` files and six streamed `predictions_correct.csv` exports |
 | `paper_vocabulary_oov_*` (Figure 6) | `src/plot_paper.py::plot_vocabulary_oov` | Thirty `train_<percent>pct/data_stats.json` files |
 | `paper_test_perplexity_*` (Figure 7) | `src/plot_paper.py::plot_test_perplexity` | Six `metrics/metrics.csv` files; all five budgets |

@@ -1,0 +1,147 @@
+{
+  "accuracy_skipped": true,
+  "aggregates": {
+    "event_categories": {
+      "corpora": {
+        "Brown": {
+          "categories": {
+            "oov_target": 0.00192,
+            "seen_trigram": -0.06934,
+            "unseen_bigram_retained_target": -0.11281,
+            "unseen_trigram_seen_bigram": -0.04864
+          },
+          "comparator": "bigram backoff",
+          "sum_of_displayed_rounded_categories": -0.22887,
+          "total": -0.22887
+        },
+        "Gutenberg": {
+          "categories": {
+            "oov_target": 0.19093,
+            "seen_trigram": 0.02797,
+            "unseen_bigram_retained_target": -0.18319,
+            "unseen_trigram_seen_bigram": 0.10623
+          },
+          "comparator": "bigram backoff",
+          "sum_of_displayed_rounded_categories": 0.14194,
+          "total": 0.14194
+        },
+        "Inaugural": {
+          "categories": {
+            "oov_target": 0.17724,
+            "seen_trigram": 0.13304,
+            "unseen_bigram_retained_target": -0.22356,
+            "unseen_trigram_seen_bigram": 0.03651
+          },
+          "comparator": "trigram backoff",
+          "sum_of_displayed_rounded_categories": 0.12322999999999999,
+          "total": 0.12323
+        },
+        "ROCStories": {
+          "categories": {
+            "oov_target": 0.06182,
+            "seen_trigram": -0.06731,
+            "unseen_bigram_retained_target": -0.19584,
+            "unseen_trigram_seen_bigram": -0.14337
+          },
+          "comparator": "trigram backoff",
+          "sum_of_displayed_rounded_categories": -0.3447,
+          "total": -0.34469
+        },
+        "Reuters": {
+          "categories": {
+            "oov_target": 0.19332,
+            "seen_trigram": 0.18257,
+            "unseen_bigram_retained_target": -0.27837,
+            "unseen_trigram_seen_bigram": -0.04131
+          },
+          "comparator": "trigram backoff",
+          "sum_of_displayed_rounded_categories": 0.056209999999999996,
+          "total": 0.05622
+        },
+        "WebText": {
+          "categories": {
+            "oov_target": 0.24978,
+            "seen_trigram": 0.05337,
+            "unseen_bigram_retained_target": -0.10223,
+            "unseen_trigram_seen_bigram": 0.22513
+          },
+          "comparator": "bigram backoff",
+          "sum_of_displayed_rounded_categories": 0.42605,
+          "total": 0.42605
+        }
+      },
+      "difference": "LSTM minus fixed backoff NLL",
+      "source": "Complete-training Table 4 aggregates; WebText independently verified from scoring_events.jsonl.gz",
+      "units": "nats per total test event"
+    }
+  },
+  "corpus_order": [
+    "brown",
+    "gutenberg",
+    "inaugural",
+    "reuters",
+    "roc-stories",
+    "webtext"
+  ],
+  "display_names": {
+    "brown": "Brown",
+    "gutenberg": "Gutenberg",
+    "inaugural": "Inaugural",
+    "reuters": "Reuters",
+    "roc-stories": "ROCStories",
+    "webtext": "WebText"
+  },
+  "generated_at": "2026-11-08T14:41:38.941144+05:30",
+  "inputs": [
+    {
+      "modified_ns": 1793581412000000000,
+      "path": "/Users/muralidm/study/NLP/assignment/code/bits-nlp-assignment/results/brown_press_neural/metrics/metrics.csv",
+      "size_bytes": 54827
+    },
+    {
+      "modified_ns": 315513000000000000,
+      "path": "/Users/muralidm/study/NLP/assignment/code/bits-nlp-assignment/results/gutenberg_neural/metrics/metrics.csv",
+      "size_bytes": 55231
+    },
+    {
+      "modified_ns": 315513000000000000,
+      "path": "/Users/muralidm/study/NLP/assignment/code/bits-nlp-assignment/results/inaugural_neural/metrics/metrics.csv",
+      "size_bytes": 53366
+    },
+    {
+      "modified_ns": 1793897620000000000,
+      "path": "/Users/muralidm/study/NLP/assignment/code/bits-nlp-assignment/results/reuters_neural/metrics/metrics.csv",
+      "size_bytes": 53848
+    },
+    {
+      "modified_ns": 1793898376000000000,
+      "path": "/Users/muralidm/study/NLP/assignment/code/bits-nlp-assignment/results/roc-stories/metrics/metrics.csv",
+      "size_bytes": 32958
+    },
+    {
+      "modified_ns": 1794128933646374335,
+      "path": "/Users/muralidm/study/NLP/assignment/code/bits-nlp-assignment/results/webtext-nn/metrics/metrics.csv",
+      "size_bytes": 97387
+    }
+  ],
+  "not_generated": {},
+  "output_dir": "/Users/muralidm/study/NLP/assignment/code/bits-nlp-assignment/docs/figures",
+  "outputs": [
+    "/Users/muralidm/study/NLP/assignment/code/bits-nlp-assignment/docs/figures/paper_event_categories_20261108_webtext_verified.png",
+    "/Users/muralidm/study/NLP/assignment/code/bits-nlp-assignment/docs/figures/paper_event_categories_20261108_webtext_verified.pdf"
+  ],
+  "plot_functions": {
+    "event-categories": "plot_event_category_contributions"
+  },
+  "plot_outputs": {
+    "event-categories": [
+      "/Users/muralidm/study/NLP/assignment/code/bits-nlp-assignment/docs/figures/paper_event_categories_20261108_webtext_verified.png",
+      "/Users/muralidm/study/NLP/assignment/code/bits-nlp-assignment/docs/figures/paper_event_categories_20261108_webtext_verified.pdf"
+    ]
+  },
+  "results_root": "/Users/muralidm/study/NLP/assignment/code/bits-nlp-assignment/results",
+  "selected_plots": [
+    "event-categories"
+  ],
+  "tag": "20261108_webtext_verified"
+}

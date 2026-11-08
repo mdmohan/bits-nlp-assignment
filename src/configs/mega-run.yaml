@@ -1,8 +1,8 @@
 run:
-# #  - brown.yaml
-# #  - gutenberg.yaml
-#   - inaugural.yaml
+  - brown.yaml
+  - gutenberg.yaml
+  - inaugural.yaml
   - reuters.yaml
-  # - roc-stories.yaml
-  # - webtext.yaml
+  - roc-stories.yaml
+  - webtext.yaml
 train_percentages: [20, 40, 60, 80, 100]

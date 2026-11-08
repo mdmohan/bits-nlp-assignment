@@ -7,17 +7,10 @@ created.
 
 ## 1. Required authorship and approval
 
-- [ ] Add the fourth group member's name and student ID to the paper, proposal
-  and contribution declaration.
-- [ ] Replace the contribution placeholders with wording approved by all four
-  authors. Correct `collecting resuts` and standardize the contribution prose at
-  the same time.
-- [ ] Obtain all-author approval of the final manuscript, contribution statement
-  and responsibility statement.
+- [x] Retain the final three-author contribution table and collective
+  responsibility statement. Do not reintroduce a fourth-member or
+  contribution-related `TBD`.
 - [ ] Obtain group approval of the final AI-use declaration.
-- [ ] Synchronize the author roster and contribution wording across
-  `Paper_Final_Draft.md`, `submission/proposal.md` and
-  `submission/contributions_and_ai.md`.
 
 ## 2. Evidence and documentation consistency
 
@@ -34,11 +27,8 @@ created.
   retained evidence supports that mapping.
 - [ ] Resolve Reference 17: cite it in the manuscript where relevant or remove it
   from the reference list. References 1-16 are currently cited.
-- [ ] After the source is frozen, update or remove brittle source-line references
-  in Appendix F. At the current revision, the model-summary call is at
-  `src/lm/controller.py:167` and `Trainer.print_model_summary` begins at
-  `src/lm/neural/trainer.py:66`, not at the line numbers currently printed in the
-  paper.
+- [x] Replace brittle source-line references in Appendix F with stable class,
+  method and source-file references.
 - [ ] Run a final placeholder scan and resolve every remaining `TBD` in the paper.
 
 ## 3. Manuscript QA

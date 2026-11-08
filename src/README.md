@@ -4,9 +4,9 @@
 
 Final V3 covers Brown/Gutenberg/Inaugural/Reuters/ROCStories/WebText,
 20/40/60/80/100% prefixes of sorted training sentence lines, nine models,
-210 neural fits and 180 statistical conditions. Vocabulary is rebuilt per
-budget: Brown `min_freq=2`, other five 1. Four corpora use seeds 13/42/2026;
-ROCStories/WebText use 13 only. The LSTM uses the available sentence prefix and
+240 neural fits and 180 statistical conditions. Vocabulary is rebuilt per
+budget: Brown `min_freq=2`, other five 1. Five corpora use seeds 13/42/2026;
+ROCStories uses 13 only. The LSTM uses the available sentence prefix and
 resets per sentence, not a fixed four-word context. Historical examples later
 in this file are not V3 results or submission checks.
 

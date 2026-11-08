@@ -4,12 +4,12 @@
 name: webtext-nn
 output_dir: results
 device: auto          # auto -> cuda, then mps, then cpu
-seeds: [13]
+seeds: [13, 42, 2026]
 
 data:
   corpus: webtext
-  split_ratios: [0.7, 0.2, 0.1]  # train, validation, test
-  split_seed: 3999
+  split_ratios: [0.2, 0.4, 0.4]  # train, validation, test; preserves the final 1/2/2 file split
+  split_seed: 13
   use_cached: true
   input: data/raw                # raw-data root
   output: data/processed         # processed-data root

@@ -8,11 +8,11 @@ sorted training sentence lines, not whole-document budgets or random samples.
 Vocabulary is rebuilt from each prefix: Brown uses `min_freq=2`; the other five
 corpora use `min_freq=1`. Lowercase whitespace tokenization is shared.
 
-There are nine models: bigram/trigram MLE, add-one and absolute-discount backoff,
+There are nine models: bigram/trigram MLE, Laplace and absolute-discount backoff,
 FFNN context 1/context 2, and a sentence-prefix LSTM that resets per sentence,
-not a fixed four-word LSTM. Brown/Gutenberg/Inaugural/Reuters use neural seeds
-13/42/2026; ROCStories/WebText use 13 only. The final evidence comprises 210
-neural fits and 180 statistical conditions (390 test conditions), from 30 shared
+not a fixed four-word LSTM. Brown/Gutenberg/Inaugural/Reuters/WebText use neural
+seeds 13/42/2026; ROCStories uses 13 only. The final evidence comprises 240
+neural fits and 180 statistical conditions (420 test conditions), from 30 shared
 counting passes. Only 20 serialized count archives are retained; all ten
 Gutenberg/Inaugural archives are absent.
 

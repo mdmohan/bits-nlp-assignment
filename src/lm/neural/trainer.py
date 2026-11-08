@@ -63,6 +63,76 @@ class Trainer:
         self.allowed_target_ids = allowed_target_ids
         self.optimizer = torch.optim.Adam(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
 
+    def print_model_summary(
+        self,
+        preferred_batch_size: int = 32,
+        preferred_sequence_length: int = 10,
+        max_output_elements: int = 4_000_000,
+    ) -> None:
+        """Print deterministic pre-training architecture evidence without changing training state.
+
+        The inspection input is capped because every neural LM materializes
+        ``batch x sequence x vocabulary`` logits.  The default remains 32 x 10 for
+        the small Inaugural models used in Appendix A, while large-vocabulary runs
+        automatically use fewer token positions.
+        """
+        output_layer = getattr(self.model, "output", None)
+        vocab_size = max(1, int(getattr(output_layer, "out_features", 1)))
+        max_positions = max(1, max_output_elements // vocab_size)
+        sequence_length = max(1, min(preferred_sequence_length, max_positions))
+        batch_size = max(
+            1,
+            min(preferred_batch_size, max_positions // sequence_length),
+        )
+
+        print("\nNeural architecture summary (before training)", flush=True)
+        print(
+            f"  model={type(self.model).__name__} | "
+            f"inspection_input={batch_size}x{sequence_length} token IDs | "
+            f"device={self.device}",
+            flush=True,
+        )
+        print(self.model, flush=True)
+
+        try:
+            from torchinfo import summary
+        except ImportError:
+            trainable = sum(
+                parameter.numel()
+                for parameter in self.model.parameters()
+                if parameter.requires_grad
+            )
+            print(
+                "  torchinfo is unavailable; install torchinfo==1.8.0 for the "
+                "layer-by-layer table.",
+                flush=True,
+            )
+            print(f"  trainable_parameters={trainable:,}", flush=True)
+            return
+
+        rng_state = self._capture_rng_state()
+        was_training = self.model.training
+        try:
+            self.model.eval()
+            inspection_input = torch.full(
+                (batch_size, sequence_length),
+                self.pad_id,
+                dtype=torch.long,
+                device=self.device,
+            )
+            with torch.no_grad():
+                summary(
+                    self.model,
+                    input_data=inspection_input,
+                    mode="eval",
+                    verbose=1,
+                    col_names=("input_size", "output_size", "num_params", "trainable"),
+                    row_settings=("var_names",),
+                )
+        finally:
+            self.model.train(was_training)
+            self._restore_rng_state(rng_state)
+
     def _batch_loss(self, inputs, targets):
         inputs, targets = inputs.to(self.device), targets.to(self.device)
         logits = mask_logits(self.model(inputs), self.allowed_target_ids)

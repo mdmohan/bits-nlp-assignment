@@ -29,6 +29,7 @@ PYTHONPATH=src:src/tests ~/.venvs/nlp-lm/bin/python -B -m unittest test_experime
 | `test_reporting.py` | Sample seed variability, plateau/ceiling counts and best/last-epoch plots, including legacy metadata |
 | `test_analysis.py` | Token-weighted loss reconstruction, honest infinite MLE losses, stable event cohorts, deterministic disjoint case selection, all-seed comparisons and original-versus-mapped counts |
 | `test_rare_targets.py` | Exhaustive lexical/combination inventories, all repeated contexts, rare/unseen boundaries, unscorable training-only types, mapped versus lexical accuracy, all-seed wins and empty strata |
+| `test_model_comparison_resume.py` | Metric-unit validation, suffixed prediction-backup selection, rare-order keys, interrupted-journal cleanup, duplicate-free export merge and full-run resume wiring |
 
 Fixtures use the same `Dict(key,value)` and paragraph/sentence record shapes as
 the imported stores. Keep fixtures small and reuse these modules rather than

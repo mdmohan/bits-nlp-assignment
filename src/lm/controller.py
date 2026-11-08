@@ -164,6 +164,7 @@ class LanguageModelController:
         model = build_model(model_name, len(self.vocab), self.vocab.pad_id, **model_params)
         trainer = Trainer(model, train_config, self.vocab.pad_id, self.device,
                   allowed_target_ids=self.allowed_target_ids)
+        trainer.print_model_summary()
 
         start = time.perf_counter()
         history = trainer.fit(

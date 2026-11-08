@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Evaluate saved neural and count-based LMs across available train percentages.
 
-Usage: python src/model_comparison.py <corpus> [--check]
+Usage: python src/model_comparison.py <corpus> [--check | --resume]
 
 The script discovers ``results/<run-name>/train_*pct`` folders (or a legacy
 single results folder), evaluates each saved neural checkpoint and six n-gram
@@ -9,6 +9,12 @@ baselines on the exact saved training subset plus valid/test, then writes
 metrics, perplexity summaries, prediction details, and plots under
 ``results/<run-name>/metrics/``. Evaluation events are streamed to CSV to avoid
 keeping corpus-sized prediction tables in memory.
+
+Normal runs write into a resume journal and replace the canonical CSV files
+only after every evaluation unit succeeds. ``--resume`` validates completed
+metric rows, removes any uncommitted prediction rows, and continues with only
+the missing units. Existing suffixed prediction exports can be used as the
+preserved prediction source without loading them into memory.
 """
 
 from __future__ import annotations
@@ -16,13 +22,16 @@ from __future__ import annotations
 import argparse
 import csv
 import gzip
+import hashlib
 import json
 import math
+import os
 import pickle
 import re
 import sys
 import time
 from collections import defaultdict
+from contextlib import nullcontext
 from pathlib import Path
 
 import yaml
@@ -50,11 +59,15 @@ PREDICTION_FIELDS = [
     "percent", "model", "seed", "source", "context", "expected", "prediction",
     "correctness", "weight", "rare_file",
 ]
-METRIC_FIELDS = [
+BASE_METRIC_FIELDS = [
     "corpus", "percent", "model", "family", "order", "seed", "source",
     "sentences", "word_tokens", "prediction_events", "correct_predictions",
     "accuracy", "perplexity", "status", "zero_probability_events", "oov_tokens",
     "oov_rate", "evaluation_seconds", "train_seconds",
+]
+METRIC_FIELDS = BASE_METRIC_FIELDS + [
+    "prediction_rows", "prediction_weight", "prediction_digest",
+    "evaluation_signature",
 ]
 
 NGRAM_SPECS = [
@@ -68,6 +81,61 @@ NGRAM_SPECS = [
 SPECIAL_OUTPUT = {PAD, BOS, EOS}
 
 
+class NullCSVWriter:
+    """CSV-writer-compatible sink used for derivable resume subsets."""
+
+    @staticmethod
+    def writerow(_row: dict) -> None:
+        return None
+
+
+def empty_prediction_stats() -> dict:
+    return {
+        "rows": 0,
+        "weight": 0,
+        "correct": 0,
+        "invalid": 0,
+        "digest": hashlib.sha256(),
+    }
+
+
+def add_prediction_stats(stats: dict, row: dict, weight: int) -> None:
+    """Add one normalized export row to a per-unit validation digest."""
+    values = [str(row.get(field, "")) for field in PREDICTION_FIELDS]
+    payload = "\x1f".join(values).encode("utf-8")
+    stats["digest"].update(len(payload).to_bytes(8, "big"))
+    stats["digest"].update(payload)
+    stats["rows"] += 1
+    stats["weight"] += weight
+    correctness = row.get("correctness")
+    if correctness == "correct":
+        stats["correct"] += weight
+    elif correctness != "incorrect":
+        stats["invalid"] += 1
+
+
+def prediction_digest(stats: dict | None) -> str:
+    if not stats:
+        return hashlib.sha256().hexdigest()
+    digest = stats.get("digest")
+    return digest.hexdigest() if hasattr(digest, "hexdigest") else str(digest or "")
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def stable_signature(value) -> str:
+    payload = json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def project_path(value: str | Path, root: Path = PROJECT_ROOT) -> Path:
     path = Path(value).expanduser()
     return path.resolve() if path.is_absolute() else (root / path).resolve()
@@ -79,7 +147,9 @@ def display_path(path: Path) -> Path:
     return path
 
 
-def load_corpus_config(corpus: str, explicit_path: str | Path | None = None) -> tuple[dict, Path]:
+def load_corpus_config(
+    corpus: str, explicit_path: str | Path | None = None
+) -> tuple[dict, Path]:
     if explicit_path is not None:
         path = project_path(explicit_path)
         config = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -147,7 +217,7 @@ def checkpoint_paths(percent_dir: Path) -> list[Path]:
 
 def model_label(checkpoint: Path, loaded_name: str) -> str:
     folder = checkpoint.parent.name
-    if re.fullmatch(r"ffnn_ctx\d+(?:_\d+)?", folder) or folder == "lstm":
+    if re.fullmatch(r"(?:ffnn_ctx\d+|lstm)(?:_\d+)?", folder):
         return folder
     return loaded_name
 
@@ -202,7 +272,9 @@ def make_ngram_variants(train_path: Path, vocab: Vocab, lowercase: bool,
 
 
 def metric_row(corpus: str, percent: float, model_name: str, info: dict,
-               source: str, result: dict, elapsed: float) -> dict:
+               source: str, result: dict, elapsed: float,
+               prediction_stats: dict | None = None) -> dict:
+    prediction_stats = prediction_stats or {}
     return {
         "corpus": corpus,
         "percent": percent,
@@ -223,6 +295,10 @@ def metric_row(corpus: str, percent: float, model_name: str, info: dict,
         "oov_rate": result.get("oov_rate", ""),
         "evaluation_seconds": elapsed,
         "train_seconds": info.get("train_seconds", ""),
+        "prediction_rows": prediction_stats.get("rows", 0),
+        "prediction_weight": prediction_stats.get("weight", 0),
+        "prediction_digest": prediction_digest(prediction_stats),
+        "evaluation_signature": info.get("evaluation_signature", ""),
     }
 
 
@@ -235,31 +311,40 @@ def report_progress(label: str, source: str, started: float, state: dict) -> Non
 
 def write_full_event(handle, event: dict, vocab: Vocab, metadata: dict) -> None:
     position = event["position"]
-    raw_target = EOS
-    if not event["eos"]:
-        raw_target = event["words"][position]
+    raw_target = EOS if event["eos"] else event["words"][position]
     log_probability = event["log_probability"]
     zero_probability = log_probability == -math.inf
     if not zero_probability and not math.isfinite(log_probability):
         raise ValueError("Invalid non-finite token log probability")
-    stored_probability = log_probability
-    if zero_probability:
-        stored_probability = None
-    record = {**metadata, "sentence_index": event["sentence_index"], "position": position,
-              "raw_target": raw_target, "target_id": event["target"],
-              "mapped_target": vocab.itos[event["target"]], "prediction_id": event["prediction"],
-              "correct": event["target"] == event["prediction"], "eos": event["eos"],
-              "oov": not event["eos"] and raw_target not in vocab,
-              "context_covered": event.get("covered"), "log_probability": stored_probability,
-              "zero_probability": zero_probability, "weight": 1}
+    record = {
+        **metadata,
+        "sentence_index": event["sentence_index"],
+        "position": position,
+        "raw_target": raw_target,
+        "target_id": event["target"],
+        "mapped_target": vocab.itos[event["target"]],
+        "prediction_id": event["prediction"],
+        "correct": event["target"] == event["prediction"],
+        "eos": event["eos"],
+        "oov": not event["eos"] and raw_target not in vocab,
+        "context_covered": event.get("covered"),
+        "log_probability": None if zero_probability else log_probability,
+        "zero_probability": zero_probability,
+        "weight": 1,
+    }
     handle.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
 
 
 def verify_scoring_events(metrics_path: Path, events_path: Path) -> dict:
     with metrics_path.open(newline="") as handle:
-        rows = [row for row in csv.DictReader(handle) if row["source"] in {"train", "valid", "test"}]
+        rows = [
+            row for row in csv.DictReader(handle)
+            if row["source"] in {"train", "valid", "test"}
+        ]
+
     def key(row):
         return (float(row["percent"]), row["model"], str(row["seed"]), row["source"])
+
     expected = {key(row): row for row in rows}
     if len(expected) != len(rows):
         raise ValueError("Duplicate base metric conditions")
@@ -270,9 +355,13 @@ def verify_scoring_events(metrics_path: Path, events_path: Path) -> dict:
             condition = key(event)
             if condition not in expected:
                 raise ValueError(f"Unexpected scoring event condition: {condition}")
-            totals = aggregates.setdefault(condition, dict(events=0, words=0, correct=0, oov=0,
-                                                          zeros=0, nll=0.0, sentences=0, position=0))
-            if event["sentence_index"] != totals["sentences"] or event["position"] != totals["position"]:
+            totals = aggregates.setdefault(
+                condition,
+                dict(events=0, words=0, correct=0, oov=0, zeros=0,
+                     nll=0.0, sentences=0, position=0),
+            )
+            if (event["sentence_index"] != totals["sentences"]
+                    or event["position"] != totals["position"]):
                 raise ValueError(f"Missing or repeated scoring occurrence: {condition}")
             totals["events"] += 1
             totals["zeros"] += int(event["zero_probability"])
@@ -292,9 +381,11 @@ def verify_scoring_events(metrics_path: Path, events_path: Path) -> dict:
         totals = aggregates[condition]
         if totals["position"]:
             raise ValueError(f"Scoring stream is missing its final EOS: {condition}")
-        for metric, field in (("prediction_events", "events"), ("word_tokens", "words"),
-                              ("correct_predictions", "correct"), ("oov_tokens", "oov"),
-                              ("zero_probability_events", "zeros"), ("sentences", "sentences")):
+        for metric, field in (
+            ("prediction_events", "events"), ("word_tokens", "words"),
+            ("correct_predictions", "correct"), ("oov_tokens", "oov"),
+            ("zero_probability_events", "zeros"), ("sentences", "sentences"),
+        ):
             if int(row[metric]) != totals[field]:
                 raise ValueError(f"Event reconstruction mismatch for {condition}: {metric}")
         accuracy = totals["correct"] / totals["words"]
@@ -305,12 +396,20 @@ def verify_scoring_events(metrics_path: Path, events_path: Path) -> dict:
                 raise ValueError(f"Zero-probability status mismatch: {condition}")
         elif row["status"] == "finite":
             mean_nll = totals["nll"] / totals["events"]
-            if not math.isclose(math.log(float(row["perplexity"])), mean_nll, rel_tol=1e-6, abs_tol=1e-6):
+            if not math.isclose(
+                math.log(float(row["perplexity"])), mean_nll,
+                rel_tol=1e-6, abs_tol=1e-6,
+            ):
                 raise ValueError(f"Perplexity reconstruction mismatch: {condition}")
-    return {"passed": True, "conditions": len(expected),
-            "events": sum(value["events"] for value in aggregates.values()),
-            "accuracy_denominator": "word_tokens", "perplexity_denominator": "word_tokens_plus_eos",
-            "sentence_index_origin": 0, "position_origin": 0}
+    return {
+        "passed": True,
+        "conditions": len(expected),
+        "events": sum(value["events"] for value in aggregates.values()),
+        "accuracy_denominator": "word_tokens",
+        "perplexity_denominator": "word_tokens_plus_eos",
+        "sentence_index_origin": 0,
+        "position_origin": 0,
+    }
 
 
 def evaluate_split(corpus: str, percent: float, label: str, info: dict, model,
@@ -321,14 +420,24 @@ def evaluate_split(corpus: str, percent: float, label: str, info: dict, model,
     started = time.perf_counter()
     progress_started = time.monotonic()
     state = {"events": 0, "last": progress_started}
+    prediction_stats = empty_prediction_stats()
 
     def sink(event: dict) -> None:
         state["events"] += 1
         report_progress(label, source, progress_started, state)
         if event_handle is not None:
-            write_full_event(event_handle, event, vocab,
-                             {"corpus": corpus, "percent": percent, "model": label,
-                              "seed": info.get("seed", ""), "source": source})
+            write_full_event(
+                event_handle,
+                event,
+                vocab,
+                {
+                    "corpus": corpus,
+                    "percent": percent,
+                    "model": label,
+                    "seed": info.get("seed", ""),
+                    "source": source,
+                },
+            )
         # Keep train split evaluation for aggregate metrics, but only emit
         # per-token prediction rows for held-out and rare examples.
         if source == "train":
@@ -360,6 +469,7 @@ def evaluate_split(corpus: str, percent: float, label: str, info: dict, model,
             "weight": 1,
             "rare_file": "",
         }
+        add_prediction_stats(prediction_stats, row, 1)
         all_writer.writerow(row)
         (correct_writer if row["correctness"] == "correct" else incorrect_writer).writerow(row)
 
@@ -379,7 +489,9 @@ def evaluate_split(corpus: str, percent: float, label: str, info: dict, model,
         case_limit=0,
     )
     elapsed = time.perf_counter() - started
-    row = metric_row(corpus, percent, label, info, source, result, elapsed)
+    row = metric_row(
+        corpus, percent, label, info, source, result, elapsed, prediction_stats
+    )
     print(
         f"  {label} / {source}: {result['word_tokens']:,} words, "
         f"accuracy={format_number(result.get('accuracy'))}, "
@@ -473,7 +585,8 @@ def finish_rare_metrics(totals: dict) -> dict:
 def rare_prediction_writer(event: dict, vocab: Vocab, model_name: str,
                            info: dict, percent: float, path: Path,
                            writers: tuple[csv.DictWriter, csv.DictWriter, csv.DictWriter],
-                           expected_id: int, weight: int, context_words: list[str]) -> None:
+                           expected_id: int, weight: int, context_words: list[str],
+                           prediction_stats: dict) -> None:
     all_writer, correct_writer, incorrect_writer = writers
     prediction_id = event["prediction"]
     expected = vocab.itos[expected_id]
@@ -493,6 +606,7 @@ def rare_prediction_writer(event: dict, vocab: Vocab, model_name: str,
         "weight": weight,
         "rare_file": path.name,
     }
+    add_prediction_stats(prediction_stats, row, weight)
     all_writer.writerow(row)
     (correct_writer if row["correctness"] == "correct" else incorrect_writer).writerow(row)
 
@@ -508,6 +622,7 @@ def evaluate_rare_file(corpus: str, percent: float, label: str, info: dict,
     row_count = 0
     progress_started = time.monotonic()
     progress_state = {"events": 0, "last": progress_started}
+    prediction_stats = empty_prediction_stats()
 
     def score_batch(records):
         if info["family"] == "ngram":
@@ -524,7 +639,8 @@ def evaluate_rare_file(corpus: str, percent: float, label: str, info: dict,
                                words[-1] == EOS, target_oov)
                 event = {"prediction": prediction_id}
                 rare_prediction_writer(event, vocab, label, info, percent, path, writers,
-                                       target_id, weight, mapped_context_words)
+                                       target_id, weight, mapped_context_words,
+                                       prediction_stats)
         else:
             # Model input sentences recreate the same prefix. The evaluator adds
             # BOS/EOS itself; removing stored BOS padding here preserves the prefix.
@@ -561,7 +677,7 @@ def evaluate_rare_file(corpus: str, percent: float, label: str, info: dict,
                 )
                 rare_prediction_writer(
                     event, vocab, label, info, percent, path, writers,
-                    target_id, weights[index], contexts[index],
+                    target_id, weights[index], contexts[index], prediction_stats,
                 )
         progress_state["events"] += sum(item[2] for item in records)
         report_progress(label, "rare", progress_started, progress_state)
@@ -581,7 +697,9 @@ def evaluate_rare_file(corpus: str, percent: float, label: str, info: dict,
         f"{totals['events']:,} weighted events, ppl={format_number(result['perplexity'])}, {elapsed:.1f}s",
         flush=True,
     )
-    row = metric_row(corpus, percent, label, info, "rare", result, elapsed)
+    row = metric_row(
+        corpus, percent, label, info, "rare", result, elapsed, prediction_stats
+    )
     row["order"] = order
     return row
 
@@ -675,6 +793,373 @@ def metric_key(row: dict) -> tuple[float, str, str, str, str]:
     )
 
 
+def model_order(label: str) -> str:
+    """Return the matched n-gram order encoded by a model label."""
+    if label.startswith("bigram_") or re.match(r"^ffnn_ctx1(?:_|$)", label):
+        return "2"
+    if label.startswith("trigram_") or re.match(r"^ffnn_ctx2(?:_|$)", label):
+        return "3"
+    return ""
+
+
+def prediction_key(row: dict) -> tuple[float, str, str, str, str]:
+    """Map one prediction export row to the metric unit that produced it."""
+    label = str(row.get("model") or "")
+    source = str(row.get("source") or "")
+    order = model_order(label)
+    if source == "rare":
+        rare_name = str(row.get("rare_file") or "").casefold()
+        if "bigram" in rare_name:
+            order = "2"
+        elif "trigram" in rare_name:
+            order = "3"
+    return (
+        round(float(row.get("percent") or 0), 8), label,
+        str(row.get("seed") or ""), source, order,
+    )
+
+
+def checkpoint_identity(checkpoint: Path) -> tuple[str, str, str]:
+    """Return (model label, seed, matched order) without loading a checkpoint."""
+    match = re.search(r"_seed(-?\d+)$", checkpoint.stem)
+    if not match:
+        raise ValueError(f"Checkpoint name does not contain a seed: {checkpoint}")
+    folder = checkpoint.parent.name
+    if re.fullmatch(r"(?:ffnn_ctx\d+|lstm)(?:_\d+)?", folder):
+        label = folder
+    else:
+        label = checkpoint.stem[:match.start()]
+    return label, match.group(1), model_order(label)
+
+
+def metric_row_valid(row: dict, expected: dict[str, int]) -> bool:
+    """Validate the counts and basic invariants of one resumable metric row."""
+    try:
+        observed = {
+            field: int(float(row[field]))
+            for field in ("sentences", "word_tokens", "prediction_events")
+        }
+        correct = int(float(row["correct_predictions"]))
+        zeros = int(float(row.get("zero_probability_events") or 0))
+        oov = int(float(row.get("oov_tokens") or 0))
+        accuracy = float(row["accuracy"]) if row.get("accuracy") not in (None, "") else None
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return False
+    if observed != expected:
+        return False
+    if not (0 <= correct <= observed["word_tokens"]):
+        return False
+    if not (0 <= zeros <= observed["prediction_events"]):
+        return False
+    if not (0 <= oov <= observed["word_tokens"]):
+        return False
+    prediction_rows = row.get("prediction_rows")
+    prediction_weight = row.get("prediction_weight")
+    if prediction_rows not in (None, "") or prediction_weight not in (None, ""):
+        try:
+            emitted_rows = int(float(prediction_rows))
+            emitted_weight = int(float(prediction_weight))
+        except (TypeError, ValueError, OverflowError):
+            return False
+        if str(row.get("source") or "") == "train":
+            if emitted_rows != 0 or emitted_weight != 0:
+                return False
+        elif not (
+            0 <= emitted_rows <= emitted_weight <= observed["word_tokens"]
+            and correct <= emitted_weight
+        ):
+            return False
+        digest = str(row.get("prediction_digest") or "")
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            return False
+    signature = str(row.get("evaluation_signature") or "")
+    if signature and not re.fullmatch(r"[0-9a-f]{64}", signature):
+        return False
+    if observed["word_tokens"]:
+        if accuracy is None or not math.isclose(
+            accuracy, correct / observed["word_tokens"], rel_tol=1e-9, abs_tol=1e-12
+        ):
+            return False
+    status = str(row.get("status") or "")
+    if status not in {"finite", "infinite_zero_probability", "overflow", "empty"}:
+        return False
+    if status == "finite":
+        try:
+            perplexity = float(row["perplexity"])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            return False
+        if not math.isfinite(perplexity) or perplexity <= 0:
+            return False
+    return True
+
+
+def metric_core(row: dict) -> tuple[str, ...]:
+    """Comparable metric content excluding machine-dependent timing columns."""
+    return tuple(str(row.get(field, "")) for field in BASE_METRIC_FIELDS
+                 if field not in {"evaluation_seconds", "train_seconds"})
+
+
+def load_resumable_metrics(
+    sources: list[tuple[str, Path]],
+    expected_totals: dict[tuple[float, str, str, str, str], dict[str, int]],
+    expected_signatures: dict[tuple[float, str, str, str, str], str] | None = None,
+) -> tuple[dict[tuple[float, str, str, str, str], dict], dict, list[str]]:
+    """Load unique, count-valid metric rows from canonical and journal CSVs."""
+    candidates: dict[tuple[float, str, str, str, str], list[tuple[str, dict]]] = defaultdict(list)
+    issues: list[str] = []
+    for origin, path in sources:
+        if not path.is_file() or not path.stat().st_size:
+            continue
+        try:
+            with path.open(encoding="utf-8-sig", newline="") as handle:
+                reader = csv.DictReader(handle)
+                if not reader.fieldnames or not set(BASE_METRIC_FIELDS).issubset(reader.fieldnames):
+                    issues.append(f"ignored {path.name}: incompatible metric header")
+                    continue
+                for row in reader:
+                    try:
+                        key = metric_key(row)
+                    except (TypeError, ValueError):
+                        continue
+                    expected = expected_totals.get(key)
+                    signature_matches = (
+                        expected_signatures is None
+                        or row.get("evaluation_signature") == expected_signatures.get(key)
+                    )
+                    if (
+                        expected is not None
+                        and signature_matches
+                        and metric_row_valid(row, expected)
+                    ):
+                        candidates[key].append((origin, row))
+        except (OSError, csv.Error) as exc:
+            issues.append(f"ignored {path.name}: {exc}")
+
+    rows: dict[tuple[float, str, str, str, str], dict] = {}
+    origins: dict[tuple[float, str, str, str, str], str] = {}
+    for key, items in candidates.items():
+        cores = {metric_core(row) for _origin, row in items}
+        if len(cores) != 1:
+            issues.append(
+                f"will recompute conflicting metric rows: {key[0]:g}% {key[1]} "
+                f"seed={key[2]} {key[3]} order={key[4]}"
+            )
+            continue
+        # Prefer the newer row carrying exact prediction-emission counts. A
+        # resume journal is newer than an equivalent canonical row and may be
+        # paired with a newly regenerated prediction group.
+        origin, row = max(
+            items,
+            key=lambda item: (
+                bool(item[1].get("prediction_rows") not in (None, "")),
+                item[0] == "journal",
+            ),
+        )
+        rows[key] = row
+        origins[key] = origin
+    return rows, origins, issues
+
+
+def valid_csv_header(path: Path, required: list[str]) -> bool:
+    try:
+        with path.open(encoding="utf-8-sig", newline="") as handle:
+            return set(required).issubset(next(csv.reader(handle), []))
+    except (OSError, csv.Error, StopIteration):
+        return False
+
+
+def prediction_candidates(report_dir: Path) -> list[Path]:
+    """Return full prediction exports, excluding subsets and resume/temp files."""
+    candidates = []
+    for path in report_dir.glob("predictions*.csv"):
+        name = path.name
+        if (not path.is_file() or not path.stat().st_size
+                or name.startswith("predictions_correct")
+                or name.startswith("predictions_incorrect")
+                or ".resume" in name or ".tmp" in name):
+            continue
+        if valid_csv_header(path, PREDICTION_FIELDS):
+            candidates.append(path)
+    return candidates
+
+
+def select_prediction_source(report_dir: Path, explicit: Path | None = None) -> Path | None:
+    """Select an existing full prediction export without modifying it."""
+    if explicit is not None:
+        path = explicit.expanduser().resolve()
+        if not path.is_file() or not valid_csv_header(path, PREDICTION_FIELDS):
+            raise ValueError(f"Prediction source is missing or has an incompatible header: {path}")
+        return path
+    candidates = prediction_candidates(report_dir)
+    return max(candidates, key=lambda path: path.stat().st_size) if candidates else None
+
+
+def scan_prediction_stats(path: Path | None, label: str) -> dict:
+    """Stream a prediction export and collect small per-unit validation counts."""
+    stats = defaultdict(empty_prediction_stats)
+    if path is None or not path.is_file() or not path.stat().st_size:
+        return stats
+    started = time.monotonic()
+    last = started
+    total_rows = 0
+    with path.open(encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        if not reader.fieldnames or not set(PREDICTION_FIELDS).issubset(reader.fieldnames):
+            raise ValueError(f"Prediction CSV has an incompatible header: {path}")
+        for row in reader:
+            try:
+                key = prediction_key(row)
+                weight = max(1, int(row.get("weight") or 1))
+            except (TypeError, ValueError):
+                continue
+            add_prediction_stats(stats[key], row, weight)
+            total_rows += 1
+            now = time.monotonic()
+            if now - last >= 20:
+                print(
+                    f"  resume scan {label}: {total_rows:,} prediction rows "
+                    f"({now - started:.0f}s)", flush=True,
+                )
+                last = now
+    print(f"  resume scan {label}: {total_rows:,} prediction rows complete", flush=True)
+    return stats
+
+
+def prediction_group_valid(row: dict, stats: dict | None) -> bool:
+    """Check that a preserved prediction group agrees with its completed metric."""
+    if str(row.get("source") or "") == "train":
+        return True  # Training metrics intentionally have no per-token export.
+    try:
+        expected_rows = int(float(row["prediction_rows"]))
+        expected_weight = int(float(row["prediction_weight"]))
+        expected_correct = int(float(row["correct_predictions"]))
+        observed = stats or empty_prediction_stats()
+        return (
+            not observed.get("invalid")
+            and observed["rows"] == expected_rows
+            and observed["weight"] == expected_weight
+            and observed["correct"] == expected_correct
+            and prediction_digest(observed) == str(row["prediction_digest"])
+        )
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def write_metric_csv(path: Path, rows: list[dict]) -> None:
+    """Atomically write a metric CSV."""
+    temporary = path.with_name(path.name + ".tmp")
+    with temporary.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=METRIC_FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+
+
+def rewrite_prediction_journal(path: Path, allowed_keys: set) -> None:
+    """Drop interrupted prediction groups from a resume journal atomically."""
+    temporary = path.with_name(path.name + ".tmp")
+    with temporary.open("w", encoding="utf-8", newline="") as output:
+        writer = csv.DictWriter(output, fieldnames=PREDICTION_FIELDS)
+        writer.writeheader()
+        if path.is_file() and path.stat().st_size:
+            with path.open(encoding="utf-8-sig", newline="") as source:
+                reader = csv.DictReader(source)
+                if reader.fieldnames and set(PREDICTION_FIELDS).issubset(reader.fieldnames):
+                    for row in reader:
+                        try:
+                            if prediction_key(row) in allowed_keys:
+                                writer.writerow(row)
+                        except (TypeError, ValueError):
+                            continue
+        output.flush()
+        os.fsync(output.fileno())
+    os.replace(temporary, path)
+
+
+def merge_prediction_exports(
+    base_source: Path | None,
+    base_keys: set,
+    journal_source: Path,
+    journal_keys: set,
+    output_files: dict[str, Path],
+    metric_rows: dict,
+) -> None:
+    """Build the three canonical prediction exports and replace them atomically."""
+    destinations = {
+        name: path.with_name(path.name + ".tmp")
+        for name, path in (
+            ("predictions", output_files["predictions"]),
+            ("correct", output_files["correct"]),
+            ("incorrect", output_files["incorrect"]),
+        )
+    }
+    handles = {
+        name: path.open("w", encoding="utf-8", newline="")
+        for name, path in destinations.items()
+    }
+    writers = {
+        name: csv.DictWriter(handle, fieldnames=PREDICTION_FIELDS)
+        for name, handle in handles.items()
+    }
+    for writer in writers.values():
+        writer.writeheader()
+    merged_stats = defaultdict(empty_prediction_stats)
+
+    def copy_rows(source_path: Path | None, allowed: set) -> None:
+        if source_path is None or not source_path.is_file() or not source_path.stat().st_size:
+            return
+        with source_path.open(encoding="utf-8-sig", newline="") as source:
+            reader = csv.DictReader(source)
+            if not reader.fieldnames or not set(PREDICTION_FIELDS).issubset(reader.fieldnames):
+                raise ValueError(f"Prediction CSV has an incompatible header: {source_path}")
+            for row in reader:
+                try:
+                    key = prediction_key(row)
+                    if key not in allowed:
+                        continue
+                    weight = max(1, int(row.get("weight") or 1))
+                except (TypeError, ValueError):
+                    continue
+                writers["predictions"].writerow(row)
+                correctness = row.get("correctness")
+                if correctness in {"correct", "incorrect"}:
+                    writers[correctness].writerow(row)
+                add_prediction_stats(merged_stats[key], row, weight)
+
+    try:
+        try:
+            copy_rows(base_source, base_keys)
+            copy_rows(journal_source, journal_keys)
+            bad = [
+                key for key, row in metric_rows.items()
+                if row.get("source") != "train"
+                and not prediction_group_valid(row, merged_stats.get(key))
+            ]
+            if bad:
+                sample = ", ".join(
+                    f"{key[0]:g}% {key[1]} seed={key[2]} {key[3]} order={key[4]}"
+                    for key in bad[:5]
+                )
+                raise ValueError(
+                    f"Prediction exports do not match {len(bad)} completed metric unit(s): {sample}"
+                )
+            for handle in handles.values():
+                handle.flush()
+                os.fsync(handle.fileno())
+        finally:
+            for handle in handles.values():
+                handle.close()
+
+        for name in ("predictions", "correct", "incorrect"):
+            os.replace(destinations[name], output_files[name])
+    except BaseException:
+        for temporary in destinations.values():
+            temporary.unlink(missing_ok=True)
+        raise
+
+
 def check_comparison(corpus: str, expected_percentages: list[float] | None = None) -> dict:
     """Read existing comparison CSVs and report completed versus pending evaluations."""
     config, config_path = load_corpus_config(corpus)
@@ -682,6 +1167,7 @@ def check_comparison(corpus: str, expected_percentages: list[float] | None = Non
     corpus_root = project_path(data.get("output", "data/processed")) / corpus
     run_base = project_path(config.get("output_dir", "results")) / config.get("name", corpus)
     metrics_path = run_base / "metrics" / "metrics.csv"
+    metric_sources = [metrics_path, run_base / "metrics" / ".metrics.resume.csv"]
     percentages = (
         [float(value) for value in expected_percentages]
         if expected_percentages is not None
@@ -697,9 +1183,11 @@ def check_comparison(corpus: str, expected_percentages: list[float] | None = Non
 
     saved_rows: dict[tuple[float, str, str, str, str], list[dict]] = defaultdict(list)
     csv_row_count = 0
-    if metrics_path.is_file() and metrics_path.stat().st_size:
+    for metric_source in metric_sources:
+        if not metric_source.is_file() or not metric_source.stat().st_size:
+            continue
         try:
-            with metrics_path.open(encoding="utf-8-sig", newline="") as handle:
+            with metric_source.open(encoding="utf-8-sig", newline="") as handle:
                 for row in csv.DictReader(handle):
                     csv_row_count += 1
                     try:
@@ -707,12 +1195,20 @@ def check_comparison(corpus: str, expected_percentages: list[float] | None = Non
                     except (TypeError, ValueError):
                         continue
         except (OSError, csv.Error) as exc:
-            print(f"Could not read {metrics_path}: {exc}")
-            return 2
+            print(f"Could not read {metric_source}: {exc}")
+            return {
+                "complete": 0,
+                "expected": 0,
+                "reports_complete": False,
+                "missing_reports": [metric_source.name],
+                "all_complete": False,
+            }
 
     print("Read-only model-comparison check (no model inference or report writes).")
     print(f"Corpus: {corpus} | metrics rows read: {csv_row_count:,}")
     print(f"Metrics CSV: {metrics_path}")
+    if metric_sources[1].is_file() and metric_sources[1].stat().st_size:
+        print(f"Resume journal: {metric_sources[1]}")
     if not rare_paths and data.get("rare_check", data.get("rare-check", False)):
         print("Rare inputs: expected by config but no rare-seq CSVs are present.")
     elif rare_paths:
@@ -803,10 +1299,6 @@ def check_comparison(corpus: str, expected_percentages: list[float] | None = Non
         done = mismatched = 0
         for key, expected_totals in expected_units:
             rows = saved_rows.get(key, [])
-            if len(rows) > 1:
-                mismatched += 1
-                issues.append(f"{percent:g}% {key[1]} seed={key[2]} {key[3]} order={key[4]}: duplicate metric rows")
-                continue
             if not rows:
                 issues.append(f"{percent:g}% {key[1]} seed={key[2]} {key[3]} order={key[4]}: metric row missing")
                 continue
@@ -814,7 +1306,16 @@ def check_comparison(corpus: str, expected_percentages: list[float] | None = Non
                 mismatched += 1
                 issues.append(f"{percent:g}% {key[1]} seed={key[2]} {key[3]} order={key[4]}: source totals unavailable")
                 continue
-            row = rows[0]
+            valid_rows = [row for row in rows if metric_row_valid(row, expected_totals)]
+            cores = {metric_core(row) for row in valid_rows}
+            if len(cores) != 1:
+                mismatched += 1
+                detail = "conflicting metric rows" if valid_rows else "invalid metric row"
+                issues.append(
+                    f"{percent:g}% {key[1]} seed={key[2]} {key[3]} order={key[4]}: {detail}"
+                )
+                continue
+            row = valid_rows[0]
             observed = {}
             try:
                 observed = {
@@ -862,7 +1363,21 @@ def check_comparison(corpus: str, expected_percentages: list[float] | None = Non
         report_paths.append(run_base / "metrics" / f"plot_{plot_percent}p.png")
     missing_reports = [path.name for path in report_paths if not path.is_file() or path.stat().st_size == 0]
     print("Final report files: " + ("all present" if not missing_reports else "missing/empty: " + ", ".join(missing_reports)))
-    complete = overall_complete == overall_expected and not missing_reports
+    resume_artifacts = [
+        run_base / "metrics" / name
+        for name in (".metrics.resume.csv", ".predictions.resume.csv")
+        if (run_base / "metrics" / name).is_file()
+    ]
+    if resume_artifacts:
+        print(
+            "Finalization pending: resume journal(s) still present: "
+            + ", ".join(path.name for path in resume_artifacts)
+        )
+    complete = (
+        overall_complete == overall_expected
+        and not missing_reports
+        and not resume_artifacts
+    )
     print(f"Comparison status: {'COMPLETE' if complete else 'PENDING'}")
     return {
         "complete": overall_complete,
@@ -1155,11 +1670,15 @@ def make_perplexity_summary(metrics: list[dict]) -> list[dict]:
     return rows
 
 
-def run(corpus: str, device_override: str | None = None,
-        config_override: str | Path | None = None) -> int:
+def run(
+    corpus: str,
+    device_override: str | None = None,
+    resume: bool = False,
+    prediction_source: Path | None = None,
+    config_override: str | Path | None = None,
+) -> int:
     config, config_path = load_corpus_config(corpus, config_override)
     if config.get("execution", {}).get("colab_only"):
-        import os
         if not os.environ.get("COLAB_RELEASE_TAG") or not torch.cuda.is_available():
             raise RuntimeError("This experiment may only fit count tables in a Colab GPU runtime")
     if config.get("data", {}).get("prepared_manifest"):
@@ -1185,11 +1704,14 @@ def run(corpus: str, device_override: str | None = None,
         "chart": report_dir / "charts.png",
         "events": report_dir / "scoring_events.jsonl.gz",
     }
+    journal_files = {
+        "metrics": report_dir / ".metrics.resume.csv",
+        "predictions": report_dir / ".predictions.resume.csv",
+    }
     print(f"Corpus: {corpus} | config: {display_path(config_path)}")
     print(f"Result runs: {display_path(run_base)}")
     print(f"Writing comparison files to {display_path(report_dir)}")
 
-    metrics: list[dict] = []
     rare_paths = {
         order: corpus_dir / f"rare-seq-{name}.csv"
         for order, name in ((2, "bigram"), (3, "trigram"))
@@ -1199,65 +1721,411 @@ def run(corpus: str, device_override: str | None = None,
         print("No rare-seq CSVs found; rare evaluation will be omitted.")
 
     cli = LanguageModelCLI(device_override or config.get("device", "auto"))
-    with output_files["metrics"].open("w", encoding="utf-8", newline="") as metric_handle, \
-         output_files["predictions"].open("w", encoding="utf-8", newline="") as prediction_handle, \
-         output_files["correct"].open("w", encoding="utf-8", newline="") as correct_handle, \
-         output_files["incorrect"].open("w", encoding="utf-8", newline="") as incorrect_handle, \
-         gzip.open(output_files["events"], "wt", encoding="utf-8") as event_handle:
+
+    # Build the expected unit/count plan once. This is the same accounting used
+    # by --check, but it follows the actual saved checkpoints and their frozen
+    # preprocessing metadata rather than assuming the source YAML is unchanged.
+    percent_runs = []
+    expected_totals: dict[tuple[float, str, str, str, str], dict[str, int]] = {}
+    expected_signatures: dict[tuple[float, str, str, str, str], str] = {}
+    expected_order: list[tuple[float, str, str, str, str]] = []
+    split_count_cache = {}
+    rare_count_cache = {}
+    file_hash_cache: dict[str, str] = {}
+
+    def hashed(path: Path) -> str:
+        resolved = str(path.resolve())
+        if resolved not in file_hash_cache:
+            file_hash_cache[resolved] = file_sha256(path)
+        return file_hash_cache[resolved]
+
+    scoring_code_signature = stable_signature({
+        str(path.relative_to(PROJECT_ROOT)): hashed(path)
+        for path in (
+            Path(__file__).resolve(),
+            PROJECT_ROOT / "src/lm/evaluation.py",
+            PROJECT_ROOT / "src/lm/cli.py",
+            PROJECT_ROOT / "src/lm/statistical/ngram.py",
+            PROJECT_ROOT / "src/lm/tokenization.py",
+        )
+    })
+
+    def add_expected(key, totals, signature_payload: dict) -> None:
+        signature = stable_signature(signature_payload)
+        if key in expected_totals:
+            if expected_totals[key] != totals or expected_signatures[key] != signature:
+                raise ValueError(f"Conflicting expected plan for evaluation unit: {key}")
+            return
+        expected_totals[key] = totals
+        expected_signatures[key] = signature
+        expected_order.append(key)
+
+    for percent, percent_dir in percent_folders:
+        checkpoints = checkpoint_paths(percent_dir)
+        if not checkpoints:
+            raise FileNotFoundError(f"No saved neural checkpoints found under {percent_dir}")
+        first_key = cli.load_neural(checkpoints[0])
+        first_loaded = cli.neural[first_key]
+        first = {key: value for key, value in first_loaded.items() if key != "model"}
+        del cli.neural[first_key], first_loaded
+        if cli.device.type == "cuda":
+            torch.cuda.empty_cache()
+        elif cli.device.type == "mps" and hasattr(torch.mps, "empty_cache"):
+            torch.mps.empty_cache()
+
+        train_path = first["train_path"]
+        if not train_path.is_file():
+            raise FileNotFoundError(f"Exact training snapshot for this run is missing: {train_path}")
+        lowercase = first["lowercase"]
+        tokenizer = first["tokenizer"]
+        train_percent = first.get("train_file_percent", 100)
+
+        def split_totals(path: Path, used_percent: float = 100) -> dict[str, int]:
+            cache_key = (str(path.resolve()), lowercase, tokenizer, float(used_percent))
+            if cache_key not in split_count_cache:
+                split_count_cache[cache_key] = count_split_targets(
+                    path, lowercase, tokenizer, used_percent
+                )
+            totals = split_count_cache[cache_key]
+            if totals is None:
+                raise FileNotFoundError(f"Evaluation split is missing: {path}")
+            return totals
+
+        split_totals_by_source = {
+            "train": split_totals(train_path, train_percent),
+            "valid": split_totals(valid_path),
+            "test": split_totals(test_path),
+        }
+        rare_totals_by_order = {}
+        for order, path in rare_paths.items():
+            cache_key = (str(path.resolve()), order, tokenizer)
+            if cache_key not in rare_count_cache:
+                rare_count_cache[cache_key] = count_rare_targets(path, order, tokenizer)
+            rare_totals_by_order[order] = rare_count_cache[cache_key]
+
+        print(f"Fingerprinting comparison inputs for {percent:g}%...", flush=True)
+        source_hashes = {
+            "train": hashed(train_path),
+            "valid": hashed(valid_path),
+            "test": hashed(test_path),
+        }
+        rare_hashes = {order: hashed(path) for order, path in rare_paths.items()}
+        common_identity = {
+            "schema": 1,
+            "corpus": corpus,
+            "percent": percent,
+            "lowercase": lowercase,
+            "tokenizer": tokenizer,
+            "vocab": stable_signature(first["vocab"]),
+            "allowed_target_ids": stable_signature(
+                first.get("allowed_target_ids", "vocab")
+            ),
+            "scoring_code": scoring_code_signature,
+        }
+
+        for spec in NGRAM_SPECS:
+            label, order = spec["name"], spec["order"]
+            for source, totals in split_totals_by_source.items():
+                add_expected(
+                    (round(percent, 8), label, "", source, str(order)),
+                    totals,
+                    {
+                        **common_identity,
+                        "model": {"family": "ngram", **spec},
+                        "training_input": source_hashes["train"],
+                        "evaluation_source": source,
+                        "evaluation_input": source_hashes[source],
+                        "order": order,
+                    },
+                )
+            if order in rare_totals_by_order:
+                add_expected(
+                    (round(percent, 8), label, "", "rare", str(order)),
+                    rare_totals_by_order[order],
+                    {
+                        **common_identity,
+                        "model": {"family": "ngram", **spec},
+                        "training_input": source_hashes["train"],
+                        "evaluation_source": "rare",
+                        "evaluation_input": rare_hashes[order],
+                        "order": order,
+                    },
+                )
+
+        checkpoint_identities = {}
+        for checkpoint in checkpoints:
+            label, seed, order = checkpoint_identity(checkpoint)
+            checkpoint_identities[checkpoint] = (label, seed, order)
+            print(f"  fingerprint checkpoint: {checkpoint.name}", flush=True)
+            checkpoint_identity_hash = hashed(checkpoint)
+            for source, totals in split_totals_by_source.items():
+                add_expected(
+                    (round(percent, 8), label, seed, source, order),
+                    totals,
+                    {
+                        **common_identity,
+                        "model": {
+                            "family": "neural",
+                            "label": label,
+                            "seed": seed,
+                            "checkpoint": checkpoint_identity_hash,
+                        },
+                        "training_input": source_hashes["train"],
+                        "evaluation_source": source,
+                        "evaluation_input": source_hashes[source],
+                        "order": order,
+                    },
+                )
+            if order == "2":
+                rare_orders = (2,)
+            elif order == "3":
+                rare_orders = (3,)
+            else:
+                rare_orders = tuple(sorted(rare_totals_by_order))
+            for rare_order in rare_orders:
+                if rare_order in rare_totals_by_order:
+                    add_expected(
+                        (round(percent, 8), label, seed, "rare", str(rare_order)),
+                        rare_totals_by_order[rare_order],
+                        {
+                            **common_identity,
+                            "model": {
+                                "family": "neural",
+                                "label": label,
+                                "seed": seed,
+                                "checkpoint": checkpoint_identity_hash,
+                            },
+                            "training_input": source_hashes["train"],
+                            "evaluation_source": "rare",
+                            "evaluation_input": rare_hashes[rare_order],
+                            "order": rare_order,
+                        },
+                    )
+
+        percent_runs.append({
+            "percent": percent,
+            "percent_dir": percent_dir,
+            "checkpoints": checkpoints,
+            "checkpoint_identities": checkpoint_identities,
+            "first": first,
+            "train_path": train_path,
+        })
+
+    base_prediction_source = None
+    base_stats = {}
+    journal_stats = {}
+    completed_rows: dict[tuple[float, str, str, str, str], dict] = {}
+    metric_origins: dict[tuple[float, str, str, str, str], str] = {}
+    prediction_origins: dict[tuple[float, str, str, str, str], str] = {}
+    issues: list[str] = []
+    if resume:
+        base_prediction_source = select_prediction_source(report_dir, prediction_source)
+        completed_rows, metric_origins, issues = load_resumable_metrics(
+            [
+                ("canonical", output_files["metrics"]),
+                ("journal", journal_files["metrics"]),
+            ],
+            expected_totals,
+            expected_signatures,
+        )
+        if base_prediction_source:
+            shown = (
+                base_prediction_source.relative_to(PROJECT_ROOT)
+                if base_prediction_source.is_relative_to(PROJECT_ROOT)
+                else base_prediction_source
+            )
+            print(f"Resume prediction source: {shown}", flush=True)
+        else:
+            print("Resume prediction source: none; completed held-out rows will be rescored.")
+
+        base_stats = scan_prediction_stats(base_prediction_source, "preserved export")
+        journal_stats = scan_prediction_stats(journal_files["predictions"], "resume journal")
+        for key in list(completed_rows):
+            if key[3] == "train":
+                prediction_origins[key] = "none"
+            elif prediction_group_valid(completed_rows[key], base_stats.get(key)):
+                prediction_origins[key] = "base"
+            elif prediction_group_valid(completed_rows[key], journal_stats.get(key)):
+                prediction_origins[key] = "journal"
+            else:
+                issues.append(
+                    f"will rescore legacy or incomplete metric/prediction group: "
+                    f"{key[0]:g}% {key[1]} seed={key[2]} {key[3]} order={key[4]}"
+                )
+                completed_rows.pop(key)
+                metric_origins.pop(key)
+    elif prediction_source is not None:
+        raise ValueError("--prediction-source requires --resume")
+
+    event_journal = report_dir / ".scoring_events.resume.jsonl.gz"
+    regular_units = {key for key in expected_order if key[3] != "rare"}
+    reuse_event_archive = False
+    if resume and output_files["events"].is_file() and output_files["metrics"].is_file():
+        try:
+            verification = verify_scoring_events(
+                output_files["metrics"], output_files["events"]
+            )
+            reuse_event_archive = (
+                verification.get("passed") is True
+                and int(verification.get("conditions", -1)) == len(regular_units)
+                and regular_units.issubset(completed_rows)
+            )
+        except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+            issues.append(f"will rebuild scoring-event archive: {exc}")
+    if not reuse_event_archive:
+        # A complete event archive cannot be assembled from skipped metric units.
+        # Rescore regular splits while retaining any validated rare-only units.
+        for key in regular_units:
+            completed_rows.pop(key, None)
+            metric_origins.pop(key, None)
+            prediction_origins.pop(key, None)
+        event_journal.unlink(missing_ok=True)
+    else:
+        print("Resume scoring-event archive: verified and reusable.", flush=True)
+
+    for issue in issues:
+        print(f"Resume note: {issue}", flush=True)
+
+    journal_keys = {key for key, origin in prediction_origins.items() if origin == "journal"}
+    if resume:
+        write_metric_csv(
+            journal_files["metrics"],
+            [
+                completed_rows[key]
+                for key in expected_order
+                if key in completed_rows and metric_origins.get(key) == "journal"
+            ],
+        )
+        rewrite_prediction_journal(journal_files["predictions"], journal_keys)
+    else:
+        write_metric_csv(journal_files["metrics"], [])
+        rewrite_prediction_journal(journal_files["predictions"], set())
+
+    print(
+        f"Comparison resume: {len(completed_rows):,}/{len(expected_order):,} "
+        f"metric units already complete; {len(expected_order) - len(completed_rows):,} pending.",
+        flush=True,
+    )
+
+    event_context = (
+        nullcontext(None)
+        if reuse_event_archive
+        else gzip.open(event_journal, "wt", encoding="utf-8")
+    )
+    with journal_files["metrics"].open("a", encoding="utf-8", newline="") as metric_handle, \
+         journal_files["predictions"].open("a", encoding="utf-8", newline="") as prediction_handle, \
+         event_context as event_handle:
         metric_writer = csv.DictWriter(metric_handle, fieldnames=METRIC_FIELDS)
-        metric_writer.writeheader()
         writers = (
             csv.DictWriter(prediction_handle, fieldnames=PREDICTION_FIELDS),
-            csv.DictWriter(correct_handle, fieldnames=PREDICTION_FIELDS),
-            csv.DictWriter(incorrect_handle, fieldnames=PREDICTION_FIELDS),
+            NullCSVWriter(),
+            NullCSVWriter(),
         )
-        for writer in writers:
-            writer.writeheader()
+        discard_writers = (NullCSVWriter(), NullCSVWriter(), NullCSVWriter())
 
-        for percent, percent_dir in percent_folders:
-            print(f"\n== {percent:g}% training data: {display_path(percent_dir)} ==", flush=True)
-            checkpoints = checkpoint_paths(percent_dir)
-            if not checkpoints:
-                raise FileNotFoundError(f"No saved neural checkpoints found under {percent_dir}")
+        def record_metric(row: dict, prediction_origin: str) -> None:
+            key = metric_key(row)
+            prediction_handle.flush()
+            os.fsync(prediction_handle.fileno())
+            metric_writer.writerow(row)
+            metric_handle.flush()
+            os.fsync(metric_handle.fileno())
+            completed_rows[key] = row
+            metric_origins[key] = "journal"
+            prediction_origins[key] = prediction_origin
 
-            # Load one checkpoint to obtain the run vocabulary and preprocessing;
-            # later neural models are loaded and released one at a time.
-            first_key = cli.load_neural(checkpoints[0])
-            first_loaded = cli.neural[first_key]
-            first = {key: value for key, value in first_loaded.items() if key != "model"}
+        def evaluate_pending(unit, evaluator) -> dict:
+            """Score one unit and reuse an exactly matching preserved group."""
+            can_try_base = (
+                resume
+                and unit[3] != "train"
+                and bool(base_stats.get(unit, {}).get("rows"))
+            )
+            row = evaluator(
+                discard_writers if can_try_base else writers,
+                event_handle if unit[3] != "rare" else None,
+            )
+            if can_try_base and prediction_group_valid(row, base_stats.get(unit)):
+                print(
+                    f"  resume: reused preserved predictions for {unit[1]} / {unit[3]}"
+                    + (f" seed={unit[2]}" if unit[2] else "")
+                    + (f" order={unit[4]}" if unit[3] == "rare" else ""),
+                    flush=True,
+                )
+                record_metric(row, "base")
+                return row
+            if can_try_base:
+                print(
+                    f"  resume: preserved predictions did not exactly match {unit[1]} / "
+                    f"{unit[3]}; regenerating that unit",
+                    flush=True,
+                )
+                # The first pass already emitted the scoring events; this pass
+                # exists only to regenerate an incompatible prediction group.
+                row = evaluator(writers, None)
+            record_metric(row, "none" if unit[3] == "train" else "journal")
+            return row
+
+        def skip_message(key) -> None:
+            print(
+                f"  resume: skipping completed {key[1]} / {key[3]}"
+                + (f" seed={key[2]}" if key[2] else "")
+                + (f" order={key[4]}" if key[3] == "rare" else ""),
+                flush=True,
+            )
+
+        for run_info in percent_runs:
+            percent = run_info["percent"]
+            percent_dir = run_info["percent_dir"]
+            print(f"\n== {percent:g}% training data: {percent_dir.relative_to(PROJECT_ROOT)} ==", flush=True)
+            checkpoints = run_info["checkpoints"]
+            first = run_info["first"]
             vocab = Vocab.from_list(first["vocab"])
-            del cli.neural[first_key], first_loaded
-            if cli.device.type == "cuda":
-                torch.cuda.empty_cache()
-            train_path = first["train_path"]
-            if not train_path.is_file():
-                raise FileNotFoundError(f"Exact training snapshot for this run is missing: {train_path}")
+            train_path = run_info["train_path"]
             print(f"Train input: {train_path.relative_to(PROJECT_ROOT) if train_path.is_relative_to(PROJECT_ROOT) else train_path}")
             print(f"Vocabulary: {len(vocab):,}; tokenizer={first['tokenizer']}; checkpoints={len(checkpoints)}")
 
-            ngram_models, _ = make_ngram_variants(
-                train_path, vocab, first["lowercase"], first["tokenizer"],
-                first.get("train_file_percent", 100),
+            ngram_pending = any(
+                key[0] == round(percent, 8)
+                and key[1] in {spec["name"] for spec in NGRAM_SPECS}
+                and key not in completed_rows
+                for key in expected_order
             )
-            from lm.preparation import file_sha256
-            with gzip.open(percent_dir / "count_models.pkl.gz", "wb") as count_handle:
-                pickle.dump({"schema_version": 1, "variants": ngram_models,
-                             "vocab": vocab.itos, "train_sha256": file_sha256(train_path),
-                             "tokenizer": first["tokenizer"], "lowercase": first["lowercase"]},
-                            count_handle, protocol=pickle.HIGHEST_PROTOCOL)
-            ngram_entries = [
-                (label, {
-                    "family": item["family"],
-                    "order": item["order"],
-                    "seed": "",
-                    "lowercase": first["lowercase"],
-                    "tokenizer": first["tokenizer"],
-                    "allowed_target_ids": "vocab",
-                    "train_seconds": item["train_seconds"],
-                    "train_file_percent": first.get("train_file_percent", 100),
-                }, item["model"])
-                for label, item in ngram_models.items()
-            ]
+            ngram_models = {}
+            ngram_entries = []
+            if ngram_pending:
+                ngram_models, _ = make_ngram_variants(
+                    train_path, vocab, first["lowercase"], first["tokenizer"],
+                    first.get("train_file_percent", 100),
+                )
+                with gzip.open(percent_dir / "count_models.pkl.gz", "wb") as count_handle:
+                    pickle.dump(
+                        {
+                            "schema_version": 1,
+                            "variants": ngram_models,
+                            "vocab": vocab.itos,
+                            "train_sha256": file_sha256(train_path),
+                            "tokenizer": first["tokenizer"],
+                            "lowercase": first["lowercase"],
+                        },
+                        count_handle,
+                        protocol=pickle.HIGHEST_PROTOCOL,
+                    )
+                ngram_entries = [
+                    (label, {
+                        "family": item["family"],
+                        "order": item["order"],
+                        "seed": "",
+                        "lowercase": first["lowercase"],
+                        "tokenizer": first["tokenizer"],
+                        "allowed_target_ids": "vocab",
+                        "train_seconds": item["train_seconds"],
+                        "train_file_percent": first.get("train_file_percent", 100),
+                    }, item["model"])
+                    for label, item in ngram_models.items()
+                ]
+            else:
+                print("  resume: all statistical metric units already complete; counts not rebuilt.")
 
             for label, info, model in ngram_entries:
                 # Shared count tables, with smoothing selected per model before scoring.
@@ -1271,43 +2139,72 @@ def run(corpus: str, device_override: str | None = None,
                 model.model._alpha_cache.clear()
                 model._backoff_prediction_cache.clear()
                 for source, path in (("train", train_path), ("valid", valid_path), ("test", test_path)):
-                    row = evaluate_split(corpus, percent, label, info, model, vocab,
-                                         path, source, cli, writers, event_handle)
-                    metrics.append(row)
-                    metric_writer.writerow(row)
-                    metric_handle.flush()
-                rare_metric_rows = []
+                    unit = (round(percent, 8), label, "", source, str(info["order"]))
+                    if unit in completed_rows:
+                        skip_message(unit)
+                        continue
+                    info["evaluation_signature"] = expected_signatures[unit]
+                    evaluate_pending(
+                        unit,
+                        lambda selected_writers, selected_event_handle,
+                               path=path, source=source: evaluate_split(
+                            corpus, percent, label, info, model, vocab,
+                            path, source, cli, selected_writers,
+                            selected_event_handle,
+                        ),
+                    )
                 for order, rare_path in rare_paths.items():
                     if info["order"] != order:
                         continue
-                    rare_metric_rows.append(evaluate_rare_file(
-                        corpus, percent, label, info, model, vocab, rare_path,
-                        order, cli, writers,
-                    ))
-                for rare_row in rare_metric_rows:
-                    metrics.append(rare_row)
-                    metric_writer.writerow(rare_row)
-                    metric_handle.flush()
+                    unit = (round(percent, 8), label, "", "rare", str(order))
+                    if unit in completed_rows:
+                        skip_message(unit)
+                        continue
+                    info["evaluation_signature"] = expected_signatures[unit]
+                    evaluate_pending(
+                        unit,
+                        lambda selected_writers, _selected_event_handle,
+                               rare_path=rare_path, order=order: evaluate_rare_file(
+                            corpus, percent, label, info, model, vocab, rare_path,
+                            order, cli, selected_writers,
+                        ),
+                    )
 
             # Neural model memory can be substantial for large vocabularies;
             # load, evaluate, and release one checkpoint before the next.
             for checkpoint in checkpoints:
+                label, seed, matched_order = run_info["checkpoint_identities"][checkpoint]
+                neural_units = [
+                    (round(percent, 8), label, seed, source, matched_order)
+                    for source in ("train", "valid", "test")
+                ]
+                if matched_order == "2":
+                    neural_rare_orders = (2,)
+                elif matched_order == "3":
+                    neural_rare_orders = (3,)
+                else:
+                    neural_rare_orders = tuple(sorted(rare_paths))
+                neural_units.extend(
+                    (round(percent, 8), label, seed, "rare", str(order))
+                    for order in neural_rare_orders if order in rare_paths
+                )
+                if all(unit in completed_rows for unit in neural_units):
+                    for unit in neural_units:
+                        skip_message(unit)
+                    continue
+
                 key = cli.load_neural(checkpoint)
                 loaded = cli.neural[key]
                 label = model_label(checkpoint, loaded["name"])
-                seed_match = re.search(r"_seed(-?\d+)$", checkpoint.stem)
                 info = dict(loaded)
                 result_path = checkpoint.with_name(checkpoint.stem + "_result.json")
                 fit_result = {}
                 if result_path.is_file():
-                    fit_result = json.loads(result_path.read_text())["result"]
+                    fit_result = json.loads(result_path.read_text(encoding="utf-8"))["result"]
                 info.update({
                     "family": "neural",
-                    "order": (
-                        2 if label.startswith("ffnn_ctx1") else
-                        3 if label.startswith("ffnn_ctx2") else ""
-                    ),
-                    "seed": seed_match.group(1) if seed_match else "",
+                    "order": int(matched_order) if matched_order else "",
+                    "seed": seed,
                     "train_seconds": fit_result.get("train_seconds", ""),
                 })
                 if tuple(info["vocab"]) != tuple(vocab.itos):
@@ -1318,52 +2215,104 @@ def run(corpus: str, device_override: str | None = None,
                     raise ValueError(f"{checkpoint} uses different preprocessing or training data")
                 model = info["model"]
                 for source, path in (("train", train_path), ("valid", valid_path), ("test", test_path)):
-                    row = evaluate_split(corpus, percent, label, info, model, vocab,
-                                         path, source, cli, writers, event_handle)
-                    metrics.append(row)
-                    metric_writer.writerow(row)
-                    metric_handle.flush()
-                rare_metric_rows = []
+                    unit = (round(percent, 8), label, seed, source, matched_order)
+                    if unit in completed_rows:
+                        skip_message(unit)
+                        continue
+                    info["evaluation_signature"] = expected_signatures[unit]
+                    evaluate_pending(
+                        unit,
+                        lambda selected_writers, selected_event_handle,
+                               path=path, source=source: evaluate_split(
+                            corpus, percent, label, info, model, vocab,
+                            path, source, cli, selected_writers,
+                            selected_event_handle,
+                        ),
+                    )
                 for order, rare_path in rare_paths.items():
-                    if label.startswith("ffnn_ctx1") and order != 2:
+                    if matched_order == "2" and order != 2:
                         continue
-                    if label.startswith("ffnn_ctx2") and order != 3:
+                    if matched_order == "3" and order != 3:
                         continue
-                    rare_metric_rows.append(evaluate_rare_file(
-                        corpus, percent, label, info, model, vocab, rare_path,
-                        order, cli, writers,
-                    ))
-                for rare_row in rare_metric_rows:
-                    metrics.append(rare_row)
-                    metric_writer.writerow(rare_row)
-                    metric_handle.flush()
+                    unit = (round(percent, 8), label, seed, "rare", str(order))
+                    if unit in completed_rows:
+                        skip_message(unit)
+                        continue
+                    info["evaluation_signature"] = expected_signatures[unit]
+                    evaluate_pending(
+                        unit,
+                        lambda selected_writers, _selected_event_handle,
+                               rare_path=rare_path, order=order: evaluate_rare_file(
+                            corpus, percent, label, info, model, vocab, rare_path,
+                            order, cli, selected_writers,
+                        ),
+                    )
                 del model, loaded, info, cli.neural[key]
                 if cli.device.type == "cuda":
                     torch.cuda.empty_cache()
                 elif cli.device.type == "mps" and hasattr(torch.mps, "empty_cache"):
                     torch.mps.empty_cache()
 
+    missing_units = [key for key in expected_order if key not in completed_rows]
+    if missing_units:
+        sample = ", ".join(str(key) for key in missing_units[:5])
+        raise RuntimeError(
+            f"Comparison ended with {len(missing_units)} metric unit(s) incomplete: {sample}"
+        )
+
+    base_keys = {key for key, origin in prediction_origins.items() if origin == "base"}
+    journal_keys = {key for key, origin in prediction_origins.items() if origin == "journal"}
+    merge_prediction_exports(
+        base_prediction_source,
+        base_keys,
+        journal_files["predictions"],
+        journal_keys,
+        output_files,
+        completed_rows,
+    )
+    metrics = [completed_rows[key] for key in expected_order]
+    # Replace metrics only after prediction exports have been verified and
+    # committed. A metric row is the authority that a prediction group is safe.
+    write_metric_csv(output_files["metrics"], metrics)
+    if not reuse_event_archive:
+        os.replace(event_journal, output_files["events"])
+
+    from lm.preparation import atomic_json
+    verification = verify_scoring_events(output_files["metrics"], output_files["events"])
+    atomic_json(report_dir / "event_verification.json", verification)
+
     summary_rows = make_perplexity_summary(metrics)
     if summary_rows:
-        with output_files["summary"].open("w", encoding="utf-8", newline="") as handle:
+        summary_tmp = output_files["summary"].with_name(output_files["summary"].name + ".tmp")
+        with summary_tmp.open("w", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=list(summary_rows[0]))
             writer.writeheader()
             writer.writerows(summary_rows)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(summary_tmp, output_files["summary"])
     plot_metrics(metrics, output_files["chart"], corpus)
     percentage_plots = plot_percentage_metrics(metrics, report_dir, corpus)
-    from lm.preparation import atomic_json, file_sha256
-    verification = verify_scoring_events(output_files["metrics"], output_files["events"])
-    atomic_json(report_dir / "event_verification.json", verification)
-    artifact_hashes = {path.relative_to(run_base).as_posix(): file_sha256(path)
-                       for path in sorted(run_base.rglob("*")) if path.is_file()
-                       and path.name != "artifact_manifest.json"}
-    atomic_json(report_dir / "artifact_manifest.json", {"schema_version": 1,
-                "config_sha256": file_sha256(config_path), "files": artifact_hashes})
+    for path in journal_files.values():
+        path.unlink(missing_ok=True)
+    artifact_hashes = {
+        path.relative_to(run_base).as_posix(): file_sha256(path)
+        for path in sorted(run_base.rglob("*"))
+        if path.is_file() and path.name != "artifact_manifest.json"
+    }
+    atomic_json(
+        report_dir / "artifact_manifest.json",
+        {
+            "schema_version": 1,
+            "config_sha256": file_sha256(config_path),
+            "files": artifact_hashes,
+        },
+    )
     for name, path in output_files.items():
         if path.exists():
-            print(f"Wrote {name}: {display_path(path)}")
+            print(f"Wrote {name}: {path.relative_to(PROJECT_ROOT)}")
     for path in percentage_plots:
-        print(f"Wrote percentage plot: {display_path(path)}")
+        print(f"Wrote percentage plot: {path.relative_to(PROJECT_ROOT)}")
     return 0
 
 
@@ -1371,20 +2320,47 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("corpus", help="corpus key from src/configs and data.yaml")
     parser.add_argument("--device", help="override configured device (auto, cpu, cuda, mps)")
-    parser.add_argument("--config", type=Path, help="explicit frozen corpus configuration")
+    parser.add_argument(
+        "--config", type=Path,
+        help="explicit corpus configuration path (useful when several configs share a corpus key)",
+    )
     parser.add_argument(
         "--check", action="store_true",
         help="read existing metrics.csv and report complete versus pending evaluations without inference or writes",
     )
+    parser.add_argument(
+        "--resume", action="store_true",
+        help=(
+            "reuse validated metric rows and prediction exports, discard incomplete "
+            "groups, and evaluate only missing units"
+        ),
+    )
+    parser.add_argument(
+        "--prediction-source",
+        type=Path,
+        help=(
+            "existing full predictions CSV to preserve during --resume; by default "
+            "the largest compatible predictions*.csv is selected"
+        ),
+    )
     args = parser.parse_args(argv)
     if args.check:
-        if args.device:
-            parser.error("--device does not apply with --check")
-        if args.config is not None:
-            parser.error("--config does not apply with --check")
+        if args.device or args.resume or args.prediction_source or args.config:
+            parser.error(
+                "--check cannot be combined with --device, --resume, "
+                "--prediction-source, or --config"
+            )
         check_comparison(args.corpus)
         return 0
-    return run(args.corpus, args.device, args.config)
+    if args.prediction_source and not args.resume:
+        parser.error("--prediction-source requires --resume")
+    return run(
+        args.corpus,
+        device_override=args.device,
+        resume=args.resume,
+        prediction_source=args.prediction_source,
+        config_override=args.config,
+    )
 
 
 if __name__ == "__main__":

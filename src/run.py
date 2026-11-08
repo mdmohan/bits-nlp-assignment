@@ -381,6 +381,21 @@ def check_full_run(manifest_path: Path) -> None:
     print(f"  Neural fits pending/incomplete: {total_fits - completed_fits - resumable_fits}")
 
 
+def comparison_command(
+    comparison: Path,
+    corpus: str,
+    resume: bool,
+    config_path: Path | None = None,
+) -> list[str]:
+    """Build the comparison subprocess command used by a full run."""
+    command = [sys.executable, str(comparison), corpus]
+    if config_path is not None:
+        command.extend(("--config", str(config_path)))
+    if resume:
+        command.append("--resume")
+    return command
+
+
 def run_full_config(config_path: str, percentages: tuple[float, ...], resume: bool = False) -> dict:
     project_root = PROJECT_ROOT
     os.chdir(project_root)
@@ -426,8 +441,11 @@ def run_full_config(config_path: str, percentages: tuple[float, ...], resume: bo
 
     comparison = project_root / "src/model_comparison.py"
     print(f"\n[{corpus}] Compare all percentage runs", flush=True)
-    subprocess.run([sys.executable, str(comparison), corpus, "--config", str(config_path)],
-                   cwd=project_root, check=True)
+    # Always enter the comparison finalizer. In resume mode it builds its plan
+    # from the saved checkpoints, skips verified units, and repairs any run that
+    # stopped after scoring but before the canonical CSV/plot commit.
+    command = comparison_command(comparison, corpus, resume, config_path)
+    subprocess.run(command, cwd=project_root, check=True)
     missing = verify_model_artifacts(config_path, config, list(percentages), check_comparison=True)
     if missing:
         raise RuntimeError(f"Full result verification failed for {corpus}: {missing[:15]}")
@@ -477,7 +495,10 @@ if __name__ == "__main__":
     parser.add_argument("--corpora", nargs="+", help="restrict suite execution to named corpora")
     parser.add_argument(
         "--resume", action="store_true",
-        help="resume interrupted neural fits from epoch checkpoints; for --suite, reuse verified fits",
+        help=(
+            "resume interrupted neural fits and full-run comparison units; "
+            "for --suite, reuse verified fits"
+        ),
     )
     parser.add_argument("--dry-run", action="store_true", help="display suite matrix without starting work")
     parser.add_argument(

@@ -8,7 +8,7 @@
 | Anuj Kumar Srivastava | 2025cs05040 |
 | Murali Das Mohan | 2025cs05052 |
 
-Working manuscript, version 0.5, 7 November 2026\. Expanded to six corpora with Reuters, ROCStories and WebText. Editable research draft, not a submission-ready paper. Saved metrics were reanalysed, and the revised three-seed WebText checkpoints were rescored on their fingerprint-matched held-out split; no models were retrained for this update. ROCStories remains the only one-seed neural experiment. Related work includes publication records through October 2026\. Affiliations, contribution statements and submission formatting remain open.
+Working manuscript, version 0.6, 8 November 2026\. Expanded to six corpora with Reuters, ROCStories and WebText. Editable research draft, not a submission-ready paper. Saved metrics were reanalysed; the revised three-seed WebText checkpoints were rescored on their fingerprint-matched held-out split, and the Reuters aggregate metrics and event archive were reconciled with its frozen run artifacts. No models were retrained for this update. ROCStories remains the only one-seed neural experiment. Related work includes publication records through October 2026\. Affiliations, contribution statements and submission formatting remain open.
 
 ## **Abstract**
 
@@ -318,7 +318,7 @@ The overline denotes the mean NLL across seeds. Negative values favor the LSTM. 
 
 ## **5\. Results**
 
-The locally available Reuters result folder is not yet reconciled with the frozen snapshot used for its consolidated values. Its numerical entries are retained provisionally but excluded from the figures below; the plotted results use the five aggregate exports that are currently verified.
+All six aggregate result bundles are reconciled with their retained run artifacts. Reuters contains all five training budgets, all three neural seeds and a verified regular-split event archive; its two omitted convenience prediction exports do not affect the aggregate tables or figures reported below.
 
 ### **5.1 Complete-Training Comparison**
 
@@ -356,7 +356,7 @@ Accuracy does not always agree with PPL. Brown’s LSTM has the highest complete
 
 WebText is a sharper warning. Its 12,818 OOV words constitute 30.42% of the 42,141 test words. Trigram add-one reports 20.09% mapped-word accuracy, but 7,637 of its 8,467 correct predictions are \<unk\> targets; its retained-word accuracy is only 830/29,323 (2.83%). Bigram add-one similarly falls from 13.50% mapped accuracy to 7.71% on retained words, with 3,427 of 5,687 correct predictions coming from \<unk\>. Trigram backoff has 4.93% mapped accuracy and 7.08% retained-word accuracy, while the three-seed LSTM means are 1.58% and approximately 2.27%. All of add-one’s raw accuracy gain over the corresponding MLE model is explained by extra \<unk\>-to-\<unk\> matches. This is an evaluation-label effect, not evidence that add-one recovers unfamiliar lexical items.
 
-Figures 1-5 visualize the complete-training comparisons for the five verified result bundles. Accuracy uses word targets, whereas perplexity includes EOS and is shown on a logarithmic scale; infinity marks an MLE condition containing at least one zero-probability event. Train, validation, test and rare bars are different evaluation populations. In particular, the rare bars summarize the separately weighted rare-sequence probe rather than another full held-out split. Neural bars are seed means without error bars, except for the single-seed ROCStories run.
+Figures 1-6 visualize the complete-training comparisons for the six verified result bundles. Accuracy uses word targets, whereas perplexity includes EOS and is shown on a logarithmic scale; infinity marks an MLE condition containing at least one zero-probability event. Train, validation, test and rare bars are different evaluation populations. In particular, the rare bars summarize the separately weighted rare-sequence probe rather than another full held-out split. Neural bars are seed means without error bars, except for the single-seed ROCStories run.
 
 ![Brown complete-training accuracy and perplexity](figures/brown_complete_training_20261107_224531.png)
 
@@ -370,13 +370,17 @@ Figures 1-5 visualize the complete-training comparisons for the five verified re
 
 *Figure 3. Inaugural model comparison after complete training. Neural bars average seeds 13, 42 and 2026.*
 
+![Reuters complete-training accuracy and perplexity](figures/reuters_complete_training_20261108_084840.png)
+
+*Figure 4. Reuters model comparison after complete training. Neural bars average seeds 13, 42 and 2026.*
+
 ![ROCStories complete-training accuracy and perplexity](figures/roc_stories_complete_training_20261107_195142.png)
 
-*Figure 4. ROCStories model comparison after complete training. Neural values come from seed 13 only.*
+*Figure 5. ROCStories model comparison after complete training. Neural values come from seed 13 only.*
 
 ![WebText complete-training accuracy and perplexity](figures/webtext_complete_training_20261107_195142.png)
 
-*Figure 5. WebText model comparison after complete training. Neural bars average seeds 13, 42 and 2026; mapped-word accuracy includes the \<unk\>-label effect discussed above.*
+*Figure 6. WebText model comparison after complete training. Neural bars average seeds 13, 42 and 2026; mapped-word accuracy includes the \<unk\>-label effect discussed above.*
 
 ### **5.2 Smoothing Ablation**
 
@@ -389,7 +393,7 @@ Both MLE orders have infinite test PPL in the complete-training evaluation for a
 | Brown | 30,392 / 122,985 (24.71%) | 17,741 / 116,408 (15.24%) | 77,813 / 122,985 (63.27%) | 13,452 / 116,408 (11.56%) |
 | Gutenberg | 422,054 / 1,017,153 (41.49%) | 125,061 / 978,972 (12.77%) | 809,886 / 1,017,153 (79.62%) | 76,630 / 978,972 (7.83%) |
 | Inaugural | 4,644 / 11,340 (40.95%) | 1,789 / 10,934 (16.36%) | 8,674 / 11,340 (76.49%) | 1,131 / 10,934 (10.34%) |
-| Reuters | 37,778 / 132,681 (28.47%) | 22,456 / 126,774 (17.71%) | 78,751 / 132,681 (59.35%) | 22,829 / 126,774 (18.01%) |
+| Reuters | 38,573 / 132,681 (29.07%) | 22,347 / 126,774 (17.63%) | 80,538 / 132,681 (60.70%) | 21,976 / 126,774 (17.33%) |
 | ROCStories | 57,689 / 476,535 (12.11%) | 67,782 / 427,651 (15.85%) | 170,129 / 476,535 (35.70%) | 73,705 / 427,651 (17.23%) |
 | WebText | 32,887 / 46,701 (70.42%) | 2,260 / 42,141 (5.36%) | 42,366 / 46,701 (90.72%) | 830 / 42,141 (1.97%) |
 
@@ -424,27 +428,31 @@ Brown’s absolute LSTM PPL rises from 164.5 to 206.8 even as its advantage over
 
 Add-one also illustrates why the percentage experiment is not a simple monotonic learning curve. Gutenberg trigram add-one rises from 16,783.6 to 52,180.6 from the smallest to largest prefix. Vocabulary growth is a concrete explanatory factor, although these runs do not isolate it from changing counts and domains.
 
-Figures 6-10 show perplexity across the five training percentages for the five verified result bundles. Each figure separates bigram- and trigram-aligned models across train, validation, test and rare populations; infinity denotes an unsmoothed condition containing zero-probability events. Neural curves are seed means without error bands, except for the single-seed ROCStories run. Reuters is omitted pending reconciliation of its result snapshot.
+Figures 7-12 show perplexity across the five training percentages for the six verified result bundles. Each figure separates bigram- and trigram-aligned models across train, validation, test and rare populations; infinity denotes an unsmoothed condition containing zero-probability events. Neural curves are seed means without error bands, except for the single-seed ROCStories run.
 
 ![Brown perplexity across training percentages](figures/brown_training_percentage_20261107_224531.png)
 
-*Figure 6. Brown perplexity from 20% to 100% of the ordered training-sentence prefixes.*
+*Figure 7. Brown perplexity from 20% to 100% of the ordered training-sentence prefixes.*
 
 ![Gutenberg perplexity across training percentages](figures/gutenberg_training_percentage_20261107_195142.png)
 
-*Figure 7. Gutenberg perplexity from 20% to 100% of the ordered training-sentence prefixes.*
+*Figure 8. Gutenberg perplexity from 20% to 100% of the ordered training-sentence prefixes.*
 
 ![Inaugural perplexity across training percentages](figures/inaugural_training_percentage_20261107_195142.png)
 
-*Figure 8. Inaugural perplexity from 20% to 100% of the ordered training-sentence prefixes.*
+*Figure 9. Inaugural perplexity from 20% to 100% of the ordered training-sentence prefixes.*
+
+![Reuters perplexity across training percentages](figures/reuters_training_percentage_20261108_084840.png)
+
+*Figure 10. Reuters perplexity from 20% to 100% of the ordered training-sentence prefixes.*
 
 ![ROCStories perplexity across training percentages](figures/roc_stories_training_percentage_20261107_195142.png)
 
-*Figure 9. ROCStories perplexity from 20% to 100% of the ordered training-sentence prefixes; neural curves use seed 13 only.*
+*Figure 11. ROCStories perplexity from 20% to 100% of the ordered training-sentence prefixes; neural curves use seed 13 only.*
 
 ![WebText perplexity across training percentages](figures/webtext_training_percentage_20261107_195142.png)
 
-*Figure 10. WebText perplexity from 20% to 100% of the ordered training-sentence prefixes.*
+*Figure 12. WebText perplexity from 20% to 100% of the ordered training-sentence prefixes.*
 
 ### **5.4 Training-Percentage Experiment: Fixed-Cohort Results**
 
@@ -637,6 +645,8 @@ Current six-corpus evidence:
 ·      *../../results/webtext-nn/metrics/metrics.csv* and *../../results/webtext-nn/metrics/predictions.csv*: revised three-seed aggregate metrics and event predictions used for the retained-word versus mapped-OOV accuracy audit.
 
 ·      *../../results/gutenberg_neural/metrics/metrics.csv*, *event_verification.json* and the five `train_*pct` directories: complete aggregate metrics and 45 fingerprinted neural fits for Gutenberg. The local copy does not contain the event archive, incorrect/full prediction exports or cached count models named in its artifact manifest. Its archived test fingerprint matches the current local test file, but the current validation file does not match the archived validation fingerprint; event-level reconstruction therefore requires either the frozen validation file or a clearly test-only recomputation.
+
+·      *../../results/reuters_neural/metrics/metrics.csv*, *event_verification.json*, *scoring_events.jsonl.gz* and the five `train_*pct` directories: complete aggregate metrics, 45 fingerprinted neural fits and 71,311,185 verified regular-split scoring events for Reuters. The local copy omits the manifest-listed full and incorrect-only prediction CSVs; the correct-only export and complete scoring-event archive are retained, so this packaging omission does not block the reported aggregate or event-category analyses.
 
 Historical three-corpus evidence:
 

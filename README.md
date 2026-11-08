@@ -236,6 +236,7 @@ Run it from the repository root:
 
 ```sh
 python src/run.py --full src/configs/mega-run.yaml
+python src/run.py --full src/configs/mega-run.yaml --resume
 python src/run.py --full src/configs/mega-run.yaml --parallelism 2
 ```
 
@@ -249,7 +250,29 @@ For each corpus, the full runner prepares or reuses the configured corpus data,
 trains every configured model and seed at each percentage, runs
 `src/model_comparison.py`, and checks for the expected model and report files
 before advancing. `--parallelism` runs separate corpus pipelines concurrently;
-it defaults to `1`.
+it defaults to `1`. With `--resume`, completed neural fits and validated
+comparison units are skipped. Comparison output is journaled and canonical CSVs
+are replaced only after a complete run, so interruption no longer truncates the
+previous evidence.
+
+The comparison command can also be resumed directly. It automatically selects
+the largest compatible full `predictions*.csv` export (including browser-suffixed
+backups) or accepts an explicit source:
+
+```sh
+python src/model_comparison.py reuters --resume
+python src/model_comparison.py reuters --resume \
+  --prediction-source results/reuters_neural/metrics/predictions-002.csv
+```
+
+Prediction CSVs do not contain target probabilities. Consequently, preserved
+prediction rows can be reused, but any missing detailed `metrics.csv` unit must
+still be rescored to recover perplexity and zero-probability counts. During that
+scoring pass, the saved prediction group is retained only when its emitted row,
+weighted-event and correct-prediction counts match exactly; otherwise that unit
+is regenerated. Each resumable unit is also fingerprinted against its checkpoint,
+training/evaluation input, vocabulary, tokenizer, model settings and scoring
+code. Saved neural models are loaded for scoring and are not retrained.
 
 Models and the exact training snapshots are stored under
 `results/<config name>/train_<percent>pct/`. Comparison artifacts are grouped
@@ -269,6 +292,59 @@ python src/plot.py results/gutenberg_neural/metrics
 
 The regenerated PNG filenames include a timestamp, so existing plots are not
 overwritten.
+
+### Cross-Corpus Paper Figures
+
+`src/plot_paper.py` combines the six authoritative result bundles into the
+publication figures. It reads saved metrics and prediction exports, plus the
+corrected Table 4 aggregates embedded for the event-category figure; it does
+not fit models, run inference or rescore any examples.
+
+Generate every paper-figure family:
+
+```sh
+python src/plot_paper.py \
+  --results-root results \
+  --output-dir docs/figures
+```
+
+Generate only the primary 100%-training accuracy/perplexity comparison with a
+stable, non-overwriting tag:
+
+```sh
+python src/plot_paper.py \
+  --results-root results \
+  --output-dir docs/figures \
+  --plots complete-training \
+  --tag final-100pct
+```
+
+Generate the corrected complete-training event-category contribution plot:
+
+```sh
+python src/plot_paper.py \
+  --results-root results \
+  --output-dir docs/figures \
+  --plots event-categories \
+  --tag final-categories
+```
+
+`--plots` accepts one or more of `complete-training`, `event-categories`,
+`test-perplexity`, `vocabulary-oov`, `accuracy` and `runtime`. The
+`event-categories` plot uses the corrected complete-training aggregates retained
+in Table 4 and records them in the provenance JSON; it does not rescore models.
+The `accuracy` plot additionally
+streams the large `predictions_correct.csv` exports to separate retained-word
+accuracy from mapped-unknown matches; use `--skip-accuracy` when that diagnostic
+is not needed.
+
+Each selected family is written as both a timestamped/tagged PNG and vector
+PDF. Output basenames are `paper_complete_training_*`,
+`paper_event_categories_*`, `paper_test_perplexity_*`,
+`paper_vocabulary_oov_*`, `paper_accuracy_*` and `paper_runtime_*`. Every
+invocation also writes `paper_plot_data_<tag>.json`,
+which records the selected plotting functions, input paths, output paths and
+the plotted aggregates. Existing tagged outputs are never overwritten.
 
 To compare tokenizer token/type counts before a run, use:
 

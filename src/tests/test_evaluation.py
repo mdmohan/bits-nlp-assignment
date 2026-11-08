@@ -2,10 +2,15 @@ import math
 import contextlib
 import io
 import json
+import random
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
+import numpy as np
 import torch
 import yaml
 
@@ -175,6 +180,49 @@ class ScoringContractTests(unittest.TestCase):
         )
         self.assertEqual(count, 3)
         self.assertAlmostEqual(loss.item(), 3 * math.log(4), places=5)
+
+    def test_pretraining_summary_preserves_model_and_rng_state(self):
+        for model_name, params in (
+            ("ffnn", dict(context_size=2, embed_dim=4, hidden_dim=8, dropout=0.2)),
+            ("lstm", dict(embed_dim=4, hidden_dim=8, num_layers=1, dropout=0.2)),
+        ):
+            with self.subTest(model=model_name):
+                model = build_model(model_name, 12, 0, **params)
+                trainer = Trainer(model, TrainConfig(epochs=1), 0, torch.device("cpu"))
+                trainer.model.train()
+                parameters_before = {
+                    name: value.detach().clone()
+                    for name, value in trainer.model.state_dict().items()
+                }
+                python_state = random.getstate()
+                numpy_state = np.random.get_state()
+                torch_state = torch.get_rng_state().clone()
+                calls = []
+
+                fake_torchinfo = types.ModuleType("torchinfo")
+
+                def fake_summary(summary_model, *, input_data, **kwargs):
+                    calls.append((tuple(input_data.shape), kwargs))
+                    self.assertFalse(summary_model.training)
+                    self.assertEqual(tuple(summary_model(input_data).shape), (32, 10, 12))
+
+                fake_torchinfo.summary = fake_summary
+                with mock.patch.dict(sys.modules, {"torchinfo": fake_torchinfo}):
+                    with contextlib.redirect_stdout(io.StringIO()) as output:
+                        trainer.print_model_summary()
+
+                self.assertIn("Neural architecture summary (before training)", output.getvalue())
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(calls[0][0], (32, 10))
+                self.assertTrue(trainer.model.training)
+                self.assertEqual(random.getstate(), python_state)
+                current_numpy_state = np.random.get_state()
+                self.assertEqual(current_numpy_state[0], numpy_state[0])
+                np.testing.assert_array_equal(current_numpy_state[1], numpy_state[1])
+                self.assertEqual(current_numpy_state[2:], numpy_state[2:])
+                torch.testing.assert_close(torch.get_rng_state(), torch_state)
+                for name, value in trainer.model.state_dict().items():
+                    torch.testing.assert_close(value, parameters_before[name])
 
     def test_mle_zero_is_not_clipped(self):
         model = NgramLM(2, 6, 2, 3, allowed_target_ids=[1, 3, 4, 5]).fit([[4, 4]])

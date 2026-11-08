@@ -1,0 +1,547 @@
+{
+  "accuracy_skipped": true,
+  "aggregates": {
+    "complete_training": {
+      "brown": {
+        "models": {
+          "bigram_backoff": {
+            "accuracy_mean": 0.15157033880832932,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": false,
+            "perplexity_mean": 260.0079900347829,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "bigram_laplace": {
+            "accuracy_mean": 0.1524036148718301,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": false,
+            "perplexity_mean": 1589.247101122596,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "bigram_mle": {
+            "accuracy_mean": 0.1524036148718301,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": true,
+            "perplexity_mean": null,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "ffnn_ctx1": {
+            "accuracy_mean": 0.14195187043273086,
+            "accuracy_sample_sd": 0.0013671095955726013,
+            "perplexity_infinite": false,
+            "perplexity_mean": 263.2414813079899,
+            "perplexity_sample_sd": 0.352272042392189,
+            "seed_count": 3
+          },
+          "ffnn_ctx2": {
+            "accuracy_mean": 0.15094896112523767,
+            "accuracy_sample_sd": 0.002505450449588603,
+            "perplexity_infinite": false,
+            "perplexity_mean": 246.62201027645037,
+            "perplexity_sample_sd": 0.9153767826253459,
+            "seed_count": 3
+          },
+          "lstm": {
+            "accuracy_mean": 0.17322119900121413,
+            "accuracy_sample_sd": 0.003040279787217934,
+            "perplexity_infinite": false,
+            "perplexity_mean": 206.81999171141115,
+            "perplexity_sample_sd": 0.8803731885521829,
+            "seed_count": 3
+          },
+          "trigram_backoff": {
+            "accuracy_mean": 0.1538210432272696,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": false,
+            "perplexity_mean": 260.177401908466,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "trigram_laplace": {
+            "accuracy_mean": 0.12773177101230157,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": false,
+            "perplexity_mean": 9641.051101584113,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "trigram_mle": {
+            "accuracy_mean": 0.11555906810528487,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": true,
+            "perplexity_mean": null,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          }
+        },
+        "percent": 100,
+        "source": "test"
+      },
+      "gutenberg": {
+        "models": {
+          "bigram_backoff": {
+            "accuracy_mean": 0.12657563239806655,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": false,
+            "perplexity_mean": 914.4788544660933,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "bigram_laplace": {
+            "accuracy_mean": 0.13255128849446154,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": false,
+            "perplexity_mean": 11772.056246476299,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "bigram_mle": {
+            "accuracy_mean": 0.1277472695848298,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": true,
+            "perplexity_mean": null,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "ffnn_ctx1": {
+            "accuracy_mean": 0.08386382177767426,
+            "accuracy_sample_sd": 0.0031540515798214137,
+            "perplexity_infinite": false,
+            "perplexity_mean": 1173.956223140596,
+            "perplexity_sample_sd": 36.622478789864495,
+            "seed_count": 3
+          },
+          "ffnn_ctx2": {
+            "accuracy_mean": 0.10449634923164298,
+            "accuracy_sample_sd": 0.006519654579416897,
+            "perplexity_infinite": false,
+            "perplexity_mean": 1171.2158254765536,
+            "perplexity_sample_sd": 41.620638668366354,
+            "seed_count": 3
+          },
+          "lstm": {
+            "accuracy_mean": 0.12129288001427348,
+            "accuracy_sample_sd": 0.012147701936259409,
+            "perplexity_infinite": false,
+            "perplexity_mean": 1053.9472694332985,
+            "perplexity_sample_sd": 2.431150549299661,
+            "seed_count": 3
+          },
+          "trigram_backoff": {
+            "accuracy_mean": 0.1255919474714292,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": false,
+            "perplexity_mean": 940.7649019131011,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "trigram_laplace": {
+            "accuracy_mean": 0.10331756168715756,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": false,
+            "perplexity_mean": 52180.59117766762,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "trigram_mle": {
+            "accuracy_mean": 0.07827598746440144,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": true,
+            "perplexity_mean": null,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          }
+        },
+        "percent": 100,
+        "source": "test"
+      },
+      "inaugural": {
+        "models": {
+          "bigram_backoff": {
+            "accuracy_mean": 0.16325224071702946,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": false,
+            "perplexity_mean": 344.3163102673107,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "bigram_laplace": {
+            "accuracy_mean": 0.16764221693799158,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": false,
+            "perplexity_mean": 2958.6738513581677,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "bigram_mle": {
+            "accuracy_mean": 0.1636180720687763,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": true,
+            "perplexity_mean": null,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "ffnn_ctx1": {
+            "accuracy_mean": 0.11752332174867386,
+            "accuracy_sample_sd": 0.00039865547316084404,
+            "perplexity_infinite": false,
+            "perplexity_mean": 448.81087784437585,
+            "perplexity_sample_sd": 3.909680385945548,
+            "seed_count": 3
+          },
+          "ffnn_ctx2": {
+            "accuracy_mean": 0.13554051582220597,
+            "accuracy_sample_sd": 0.0015276470722965076,
+            "perplexity_infinite": false,
+            "perplexity_mean": 422.7863541351212,
+            "perplexity_sample_sd": 8.309574415703954,
+            "seed_count": 3
+          },
+          "lstm": {
+            "accuracy_mean": 0.15249070178647642,
+            "accuracy_sample_sd": 0.0023590686082742723,
+            "perplexity_infinite": false,
+            "perplexity_mean": 387.0697491782712,
+            "perplexity_sample_sd": 17.448327671519305,
+            "seed_count": 3
+          },
+          "trigram_backoff": {
+            "accuracy_mean": 0.1619718309859155,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": false,
+            "perplexity_mean": 341.9627054314729,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "trigram_laplace": {
+            "accuracy_mean": 0.126028900676788,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": false,
+            "perplexity_mean": 8130.007261427519,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "trigram_mle": {
+            "accuracy_mean": 0.10343881470642034,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": true,
+            "perplexity_mean": null,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          }
+        },
+        "percent": 100,
+        "source": "test"
+      },
+      "reuters": {
+        "models": {
+          "bigram_backoff": {
+            "accuracy_mean": 0.17683436666824429,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": false,
+            "perplexity_mean": 357.3550086589806,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "bigram_laplace": {
+            "accuracy_mean": 0.17955574486882167,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": false,
+            "perplexity_mean": 5638.213555248389,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "bigram_mle": {
+            "accuracy_mean": 0.1762743149226182,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": true,
+            "perplexity_mean": null,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "ffnn_ctx1": {
+            "accuracy_mean": 0.15569175593313034,
+            "accuracy_sample_sd": 0.002254166633636546,
+            "perplexity_infinite": false,
+            "perplexity_mean": 502.68364376009157,
+            "perplexity_sample_sd": 6.324500708480134,
+            "seed_count": 3
+          },
+          "ffnn_ctx2": {
+            "accuracy_mean": 0.18098611176844884,
+            "accuracy_sample_sd": 0.0016492319372182487,
+            "perplexity_infinite": false,
+            "perplexity_mean": 412.8317972722275,
+            "perplexity_sample_sd": 4.956956965563504,
+            "seed_count": 3
+          },
+          "lstm": {
+            "accuracy_mean": 0.20826036884534682,
+            "accuracy_sample_sd": 0.0034481619118196926,
+            "perplexity_infinite": false,
+            "perplexity_mean": 308.08284385642366,
+            "perplexity_sample_sd": 0.9533911772154833,
+            "seed_count": 3
+          },
+          "trigram_backoff": {
+            "accuracy_mean": 0.21523340748102923,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": false,
+            "perplexity_mean": 291.24079946522215,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "trigram_laplace": {
+            "accuracy_mean": 0.18906084843895435,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": false,
+            "perplexity_mean": 23001.044067573992,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "trigram_mle": {
+            "accuracy_mean": 0.17334784735040307,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": true,
+            "perplexity_mean": null,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          }
+        },
+        "percent": 100,
+        "source": "test"
+      },
+      "roc-stories": {
+        "models": {
+          "bigram_backoff": {
+            "accuracy_mean": 0.15703692964590285,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": false,
+            "perplexity_mean": 134.41317969508415,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "bigram_laplace": {
+            "accuracy_mean": 0.1586737783847109,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": false,
+            "perplexity_mean": 1210.9813231474473,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "bigram_mle": {
+            "accuracy_mean": 0.15849840173412433,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": true,
+            "perplexity_mean": null,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "ffnn_ctx1": {
+            "accuracy_mean": 0.15437588126766918,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": false,
+            "perplexity_mean": 140.26018676178492,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "ffnn_ctx2": {
+            "accuracy_mean": 0.1815405552658593,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": false,
+            "perplexity_mean": 106.84554560415694,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "lstm": {
+            "accuracy_mean": 0.21460489978978187,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": false,
+            "perplexity_mean": 78.1784895404433,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "trigram_backoff": {
+            "accuracy_mean": 0.18644642477160114,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": false,
+            "perplexity_mean": 110.35350615294968,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "trigram_laplace": {
+            "accuracy_mean": 0.173718756649698,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": false,
+            "perplexity_mean": 6476.608618745181,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "trigram_mle": {
+            "accuracy_mean": 0.17234848041978154,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": true,
+            "perplexity_mean": null,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          }
+        },
+        "percent": 100,
+        "source": "test"
+      },
+      "webtext": {
+        "models": {
+          "bigram_backoff": {
+            "accuracy_mean": 0.051375145345388104,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": false,
+            "perplexity_mean": 3396.736383360947,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "bigram_laplace": {
+            "accuracy_mean": 0.13495170973636125,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": false,
+            "perplexity_mean": 9927.794927008916,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "bigram_mle": {
+            "accuracy_mean": 0.05362948197717188,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": true,
+            "perplexity_mean": null,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "ffnn_ctx1": {
+            "accuracy_mean": 0.03054032889584965,
+            "accuracy_sample_sd": 0.0010126284755156189,
+            "perplexity_infinite": false,
+            "perplexity_mean": 5046.379579587785,
+            "perplexity_sample_sd": 243.4496195798562,
+            "seed_count": 3
+          },
+          "ffnn_ctx2": {
+            "accuracy_mean": 0.0330556939797347,
+            "accuracy_sample_sd": 0.0020052784165846076,
+            "perplexity_infinite": false,
+            "perplexity_mean": 4976.412958231121,
+            "perplexity_sample_sd": 298.32884900698923,
+            "seed_count": 3
+          },
+          "lstm": {
+            "accuracy_mean": 0.015764536516298458,
+            "accuracy_sample_sd": 0.007498385213941889,
+            "perplexity_infinite": false,
+            "perplexity_mean": 5369.864522147321,
+            "perplexity_sample_sd": 1731.4238168301206,
+            "seed_count": 3
+          },
+          "trigram_backoff": {
+            "accuracy_mean": 0.049263187869295934,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": false,
+            "perplexity_mean": 3548.7531086492268,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "trigram_laplace": {
+            "accuracy_mean": 0.20092071854013907,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": false,
+            "perplexity_mean": 16396.338629686852,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          },
+          "trigram_mle": {
+            "accuracy_mean": 0.0196957832040056,
+            "accuracy_sample_sd": null,
+            "perplexity_infinite": true,
+            "perplexity_mean": null,
+            "perplexity_sample_sd": null,
+            "seed_count": 1
+          }
+        },
+        "percent": 100,
+        "source": "test"
+      }
+    }
+  },
+  "corpus_order": [
+    "brown",
+    "gutenberg",
+    "inaugural",
+    "reuters",
+    "roc-stories",
+    "webtext"
+  ],
+  "display_names": {
+    "brown": "Brown",
+    "gutenberg": "Gutenberg",
+    "inaugural": "Inaugural",
+    "reuters": "Reuters",
+    "roc-stories": "ROCStories",
+    "webtext": "WebText"
+  },
+  "generated_at": "2026-11-08T10:55:55.255154+05:30",
+  "inputs": [
+    {
+      "modified_ns": 1793581412000000000,
+      "path": "/Users/muralidm/study/NLP/assignment/code/bits-nlp-assignment/results/brown_press_neural/metrics/metrics.csv",
+      "size_bytes": 54827
+    },
+    {
+      "modified_ns": 315513000000000000,
+      "path": "/Users/muralidm/study/NLP/assignment/code/bits-nlp-assignment/results/gutenberg_neural/metrics/metrics.csv",
+      "size_bytes": 55231
+    },
+    {
+      "modified_ns": 315513000000000000,
+      "path": "/Users/muralidm/study/NLP/assignment/code/bits-nlp-assignment/results/inaugural_neural/metrics/metrics.csv",
+      "size_bytes": 53366
+    },
+    {
+      "modified_ns": 1793897620000000000,
+      "path": "/Users/muralidm/study/NLP/assignment/code/bits-nlp-assignment/results/reuters_neural/metrics/metrics.csv",
+      "size_bytes": 53848
+    },
+    {
+      "modified_ns": 1793898376000000000,
+      "path": "/Users/muralidm/study/NLP/assignment/code/bits-nlp-assignment/results/roc-stories/metrics/metrics.csv",
+      "size_bytes": 32958
+    },
+    {
+      "modified_ns": 1794032412000000000,
+      "path": "/Users/muralidm/study/NLP/assignment/code/bits-nlp-assignment/results/webtext-nn/metrics/metrics.csv",
+      "size_bytes": 49943
+    }
+  ],
+  "not_generated": {
+    "category_weighted_loss": "Revised WebText scoring-event/log-probability archive is not present locally.",
+    "event_category_shares": "Revised WebText scoring-event archive is not present locally."
+  },
+  "output_dir": "/Users/muralidm/study/NLP/assignment/code/bits-nlp-assignment/docs/figures",
+  "outputs": [
+    "/Users/muralidm/study/NLP/assignment/code/bits-nlp-assignment/docs/figures/paper_complete_training_20261108_100pct_logaxis_infinity.png",
+    "/Users/muralidm/study/NLP/assignment/code/bits-nlp-assignment/docs/figures/paper_complete_training_20261108_100pct_logaxis_infinity.pdf"
+  ],
+  "plot_functions": {
+    "complete-training": "plot_complete_training"
+  },
+  "plot_outputs": {
+    "complete-training": [
+      "/Users/muralidm/study/NLP/assignment/code/bits-nlp-assignment/docs/figures/paper_complete_training_20261108_100pct_logaxis_infinity.png",
+      "/Users/muralidm/study/NLP/assignment/code/bits-nlp-assignment/docs/figures/paper_complete_training_20261108_100pct_logaxis_infinity.pdf"
+    ]
+  },
+  "results_root": "/Users/muralidm/study/NLP/assignment/code/bits-nlp-assignment/results",
+  "selected_plots": [
+    "complete-training"
+  ],
+  "tag": "20261108_100pct_logaxis_infinity"
+}

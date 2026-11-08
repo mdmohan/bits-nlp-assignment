@@ -10,3 +10,4 @@ datasketch>=1.6
 beautifulsoup4>=4.12
 langdetect>=1.0.9
 typing_extensions>=4.8
+torchinfo==1.8.0

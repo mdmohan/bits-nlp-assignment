@@ -1,4 +1,5 @@
 torch>=2.5
+torchinfo==1.8.0
 nltk>=3.9
 pyyaml>=6.0
 pandas>=2.2

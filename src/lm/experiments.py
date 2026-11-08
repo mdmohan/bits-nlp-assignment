@@ -340,6 +340,7 @@ class ExperimentSuite:
                         train_loader = make_loader(train, vocab, batch_size, True, padded_limit)
                         valid_loader = make_loader(valid, vocab, batch_size, False, padded_limit)
                         trainer = Trainer(model, TrainConfig(**training), vocab.pad_id, self.device, vocab.allowed_target_ids)
+                        trainer.print_model_summary()
                         checkpoint = f"{model_name}_seed{seed}.pt"
                         recorded = []
 

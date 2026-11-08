@@ -8,6 +8,7 @@ seven-corpus acceptance gate has passed.
 | --- | --- |
 | [Direction 1](../01_data_efficiency.md) | Scientific question, scope and interpretation |
 | [plan.md](plan.md) | Protocol, implementation decisions, tasks and remaining research work |
+| [recommendations.md](recommendations.md) | Proposed Inaugural follow-up, validation-based stopping, audit prerequisites and interpretation limits |
 | [checkpoints/tasks-to-impl.yaml](checkpoints/tasks-to-impl.yaml) | Requirement/task/file mapping and partial completion evidence |
 | [batch-report.yaml](batch-report.yaml) | Pilot configuration, verification snapshot, test evidence and limitations |
 

@@ -140,6 +140,19 @@ class ScoringContractTests(unittest.TestCase):
                 [["Hello", "world.", "Another", "sentence."]],
             )
 
+    def test_backoff_normalizes_when_followers_exhaust_target_support(self):
+        for order, context in ((2, (2,)), (3, (0, 2))):
+            with self.subTest(order=order):
+                model = NgramLM(order, 4, bos=0, eos=1, smoothing="backoff",
+                                allowed_target_ids=[1, 2, 3]).fit([[2, 2], [2, 3], [2]])
+                self.assertAlmostEqual(model.check_normalisation(context), 1.0)
+                self.assertAlmostEqual(model.check_normalisation((3,) * (order - 1)), 1.0)
+
+    def test_absolute_discount_rejects_invalid_values(self):
+        for value in (-0.1, 1.0, math.inf, math.nan):
+            with self.subTest(discount=value), self.assertRaises(ValueError):
+                NgramLM(2, 4, bos=0, eos=1, smoothing="backoff", discount=value)
+
     def test_addk_normalizes_on_noncontiguous_target_ids(self):
         targets = [1, 3, 5, 7]
         model = NgramLM(

@@ -1,0 +1,82 @@
+schema_version: 1
+name: inaugural_convergence_v1
+purpose: convergence_followup
+output_root: results/inaugural_convergence_v1
+device: auto
+budgets_percent: [10, 50, 100]
+data_seed: 42
+budget_seed: 55
+validation_fraction_of_existing_train: 0.10
+vocab:
+  mode: per_budget
+  source: current_budget_train
+  min_freq: 2
+preprocessing:
+  tokenizer: whitespace_v1
+  lowercase: true
+prepared_data:
+  rebuild: false
+  import_manifest: data/processed/corpus_import_manifest.json
+  document_reader: sqlite_shelve_readonly
+  sentence_quarantine: test_then_validation_v1
+corpora:
+  inaugural:
+    train: data/processed/inaugural/train.txt
+    test: data/processed/inaugural/test.txt
+    database: data/processed/inaugural/inaugural.db
+    grouping: source_file
+training:
+  epochs: 20
+  batch_size: 32
+  patience: 3
+  grad_clip: 1.0
+  weight_decay: 0.0
+models:
+  - id: bigram_mle
+    family: ngram
+    order: 2
+    smoothing: mle
+  - id: trigram_mle
+    family: ngram
+    order: 3
+    smoothing: mle
+  - id: trigram_addk
+    family: ngram
+    order: 3
+    smoothing: laplace
+    tuning:
+      k: [0.01, 0.1, 1.0]
+  - id: lstm
+    family: neural
+    architecture:
+      embed_dim: 128
+      hidden_dim: 256
+      num_layers: 1
+      dropout: 0.3
+    tuning:
+      lr: [0.001]
+      seed: 7
+    final_seeds: [42, 43, 44]
+  - id: ffnn
+    family: neural
+    architecture:
+      context_size: 2
+      embed_dim: 128
+      hidden_dim: 256
+      dropout: 0.3
+    tuning:
+      lr: [0.001]
+      seed: 7
+    final_seeds: [42, 43, 44]
+resources:
+  max_training_events: 2000000
+  max_vocab_size: 100000
+  max_parameters: 50000000
+  max_logits_elements: 64000000
+  max_padded_tokens: 2048
+  max_sentence_tokens: 2048
+execution:
+  neural_workers: 1
+  resume_completed: true
+  incomplete_fit_policy: restart
+  ineligible_corpus_policy: record_and_skip

@@ -1,0 +1,81 @@
+metadata:
+  generated: '2026-11-02'
+  source_plan: docs/research_directions/data_efficiency/comparison_sweep_plan.md
+  target_tasks: docs/research_directions/data_efficiency/comparison_sweep_plan.md
+summary:
+  total_plan_items: 8
+  covered_plan_items: 8
+  missing_plan_items: 0
+  coverage_percentage: 100.0
+  total_tasks_generated: 24
+  orphan_tasks: 0
+phases:
+  - phase_id: '1'
+    phase_name: Fresh local inputs and frozen partitions
+    items:
+      - item_id: '1.1'
+        description: Fresh local source snapshots
+        tasks: [T001, T002, T003]
+      - item_id: '1.2'
+        description: Frozen partitions and budget inputs
+        tasks: [T004, T005, T006]
+  - phase_id: '2'
+    phase_name: Model correctness and replay identity
+    items:
+      - item_id: '2.1'
+        description: Statistical correctness and nine-model dispatch
+        tasks: [T007, T008, T009]
+      - item_id: '2.2'
+        description: Explicit new protocol and replay identity
+        tasks: [T010, T011, T012]
+  - phase_id: '3'
+    phase_name: Shared comparison evaluation and reporting
+    items:
+      - item_id: '3.1'
+        description: One evaluation and compatibility contract
+        tasks: [T013, T014, T015]
+      - item_id: '3.2'
+        description: Comparison tables and research reports
+        tasks: [T016, T017, T018]
+  - phase_id: '4'
+    phase_name: Colab execution and independent local verification
+    items:
+      - item_id: '4.1'
+        description: Verified Colab packaging and execution
+        tasks: [T019, T020, T021]
+      - item_id: '4.2'
+        description: Pilot, full sweep, and local verification
+        tasks: [T022, T023, T024]
+upstream_trace:
+  - plan_item: '1.1'
+    source_requirements: [REQ-001, REQ-008, REQ-011]
+    tasks: [T001, T002, T003]
+  - plan_item: '1.2'
+    source_requirements: [REQ-002, REQ-003, REQ-005, REQ-008]
+    tasks: [T004, T005, T006]
+  - plan_item: '2.1'
+    source_requirements: [REQ-004, REQ-005, REQ-006, REQ-011]
+    tasks: [T007, T008, T009]
+  - plan_item: '2.2'
+    source_requirements: [REQ-003, REQ-004, REQ-005, REQ-008, REQ-011]
+    tasks: [T010, T011, T012]
+  - plan_item: '3.1'
+    source_requirements: [REQ-006, REQ-007, REQ-010]
+    tasks: [T013, T014, T015]
+  - plan_item: '3.2'
+    source_requirements: [REQ-007, REQ-008, REQ-010]
+    tasks: [T016, T017, T018]
+  - plan_item: '4.1'
+    source_requirements: [REQ-008, REQ-009, REQ-011]
+    tasks: [T019, T020, T021]
+  - plan_item: '4.2'
+    source_requirements: [REQ-006, REQ-008, REQ-009, REQ-010, REQ-011, REQ-012]
+    tasks: [T022, T023, T024]
+missing_plan_items: []
+orphan_tasks: []
+validation:
+  scope: planning_traceability_only
+  passed: true
+  errors: []
+  warnings:
+    - 'All 24 tasks map to eight covered plan items and 12 requirements; no task is marked implemented.'

@@ -1,0 +1,55 @@
+metadata:
+  generated: '2026-11-02'
+  source_spec: 'User request 2026-11-02; requirements in comparison_sweep_plan.md'
+  target_plan: docs/research_directions/data_efficiency/comparison_sweep_plan.md
+summary:
+  total_requirements: 12
+  covered_requirements: 12
+  missing_requirements: 0
+  coverage_percentage: 100.0
+requirements:
+  - req_id: REQ-001
+    req_description: Refresh exactly six corpora locally with source provenance.
+    plan_items: ['1.1']
+  - req_id: REQ-002
+    req_description: Freeze audited nonempty document/source-group splits.
+    plan_items: ['1.2']
+  - req_id: REQ-003
+    req_description: Persist five cumulative document budgets and actual inputs.
+    plan_items: ['1.2', '2.2']
+  - req_id: REQ-004
+    req_description: Fit all nine independent model variants.
+    plan_items: ['2.1', '2.2']
+  - req_id: REQ-005
+    req_description: Use seed 42 throughout all random operations and job identities.
+    plan_items: ['1.2', '2.1', '2.2']
+  - req_id: REQ-006
+    req_description: Share comparison validation and scoring semantics.
+    plan_items: ['2.1', '3.1', '4.2']
+  - req_id: REQ-007
+    req_description: Preserve comparison exports and automated reports.
+    plan_items: ['3.1', '3.2']
+  - req_id: REQ-008
+    req_description: Archive all actual inputs and run artifacts for replay.
+    plan_items: ['1.1', '1.2', '2.2', '3.2', '4.1', '4.2']
+  - req_id: REQ-009
+    req_description: Automate verified Colab execution and safe resumption.
+    plan_items: ['4.1', '4.2']
+  - req_id: REQ-010
+    req_description: Export stable joinable aggregates and complete event records.
+    plan_items: ['3.1', '3.2', '4.2']
+  - req_id: REQ-011
+    req_description: Require correctness, data, resource, and pilot gates.
+    plan_items: ['1.1', '2.1', '2.2', '4.1', '4.2']
+  - req_id: REQ-012
+    req_description: Verify 270 final fits, 540 split records, and locally retrieved archives.
+    plan_items: ['4.2']
+missing_requirements: []
+orphan_plan_items: []
+validation:
+  scope: planning_traceability_only
+  passed: true
+  errors: []
+  warnings:
+    - 'Requirement, plan-item, task, existing-file-link, and matrix checks passed; implementation and execution remain pending.'
+    - 'ROCStories source archive/release is an unresolved acquisition dependency.'

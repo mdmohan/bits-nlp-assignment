@@ -29,3 +29,8 @@ __pycache__/
 *.db-*
 
 /results/*
+
+# Local experiment imports and oversized reference material.
+/collab_results/
+/downloads_kubeflow/
+/descriptive_nlp_sample_paper_with_detailed_solutions.pdf

@@ -6,3 +6,6 @@ numpy>=1.26
 datasets>=3.0  # only needed for the huggingface loader
 matplotlib>=3.9
 datasketch>=1.6
+langdetect>=1.0.9
+beautifulsoup4>=4.12
+pyarrow>=14.0

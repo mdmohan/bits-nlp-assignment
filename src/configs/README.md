@@ -37,6 +37,25 @@ configuration file's directory. Private corpus contents must match the import
 manifest and database checksum sidecars. Do not edit that provenance to accept
 unknown replacements.
 
+## Inaugural Follow-Up
+
+[data_efficiency_inaugural_convergence.yaml](data_efficiency_inaugural_convergence.yaml)
+is a separate, approved follow-up rather than an edit to the pilot:
+
+- Inaugural only, budgets `[10, 50, 100]`, neural final seeds `[42, 43, 44]`.
+- Maximum 20 epochs, patience three, strict token-mean validation NLL improvement
+  and restoration of the best checkpoint.
+- Unchanged pilot architectures, vocabulary, optimizer and batching settings.
+- Opt-in derived sentence quarantine; test takes precedence over validation,
+  which takes precedence over training. Original imports and pilot stay intact.
+- A new experiment name/output root, fresh statistical baselines and an auditable
+  record of exclusions, near-duplicate checks and actual processed training cost.
+
+Runs exhausting the epoch allowance before satisfying patience are
+budget-limited, not established convergence.
+Use the [Colab follow-up workflow](../../colab/README.md#inaugural-validation-stopping-follow-up)
+to generate a checksum-pinned notebook and bundle.
+
 ## Start A New Experiment
 
 Copy the suite YAML, choose a new `name` and `output_root`, and make the intended
@@ -48,6 +67,7 @@ Do not combine `--suite` with legacy `--algorithm`, `--seed`, `--context-size`
 or nondefault `--train-percent` overrides. Set suite values in YAML instead.
 An existing protocol rejects changed configuration or implementation hashes.
 
-Colab packaging rewrites the suite to portable prepared-index paths. Its notebook
-can select epoch/seed/output settings before a run; keep those settings fixed
-for resume and choose a new `OUTPUT_NAME` for changes. Follow the [Colab guide](../../colab/README.md).
+Colab packaging rewrites the suite to portable prepared-index paths. Generate a
+matching notebook with `lm.colab --notebook`; it verifies epochs, patience,
+budgets and seeds against the frozen bundle. Only the durable output location
+changes at execution time. Follow the [Colab guide](../../colab/README.md).

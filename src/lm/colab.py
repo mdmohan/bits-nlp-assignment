@@ -61,13 +61,69 @@ def create_bundle(suite, destination):
     return destination
 
 
+def create_notebook(suite, bundle, destination):
+    """Generate a notebook pinned to the bundled protocol, without changing it."""
+    bundle = Path(bundle).resolve()
+    with zipfile.ZipFile(bundle) as archive:
+        config = yaml.safe_load(archive.read("input/suite.yaml"))
+    neural_seeds = [spec["final_seeds"] for spec in config["models"] if spec["family"] == "neural"]
+    if not neural_seeds or any(seeds != neural_seeds[0] for seeds in neural_seeds):
+        raise ValueError("Notebook generation requires the same final seeds for all neural models.")
+    template = suite.root / "colab" / "nltk_data_efficiency.ipynb"
+    notebook = json.loads(template.read_text(encoding="utf-8"))
+    notebook["cells"][0]["source"] = [
+        f"# {config['name']}\n", "\n",
+        "Fresh LSTM and FFNN fits; validation selects the restored best checkpoint. "
+        "A patience stop is a validation plateau; a run reaching the epoch ceiling is budget-limited, not proven converged.\n",
+        "\n",
+        "Run cells in order on a T4 GPU. Authorize Google Drive directly in the browser. "
+        "The original pilot and imports remain unchanged. Prepared manifests contain the derived quarantine audit.\n",
+        "\n",
+        "The bundle checksum and training settings below are frozen together. "
+        "Do not alter them to resume a different experiment. Cross-budget vocabularies change prediction support.\n",
+    ]
+    settings = (
+        "from pathlib import Path\n\n"
+        f"EPOCHS = {config['training']['epochs']!r}\n"
+        f"PATIENCE = {config['training']['patience']!r}\n"
+        f"BUDGETS = {config['budgets_percent']!r}\n"
+        f"SEEDS = {neural_seeds[0]!r}\n"
+        f"CORPORA = {list(config['corpora'])!r}\n"
+        "USE_DRIVE = True\nREQUIRE_GPU = True\n"
+        f"OUTPUT_NAME = {config['name']!r}\n"
+        'WORKSPACE = Path("/content/nlp_assignment")\n'
+        f"EXPECTED_BUNDLE_SHA256 = {file_sha256(bundle)!r}\n\n"
+        "assert EPOCHS > 0 and PATIENCE > 0\n"
+        "assert CORPORA and SEEDS and BUDGETS\n"
+        "assert Path(OUTPUT_NAME).name == OUTPUT_NAME\n"
+        'print("Experiment:", CORPORA, "epochs:", EPOCHS, "seeds:", SEEDS)\n'
+    )
+    notebook["cells"][1]["source"] = settings.splitlines(keepends=True)
+    for cell in notebook["cells"]:
+        if cell["cell_type"] == "code":
+            cell["execution_count"] = None
+            cell["outputs"] = []
+            compile("".join(cell["source"]), "<colab-cell>", "exec")
+    destination = Path(destination).resolve()
+    if destination == template.resolve():
+        raise ValueError("Do not overwrite the archived pilot notebook; choose a new notebook path.")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(json.dumps(notebook, indent=1) + "\n", encoding="utf-8")
+    print(f"Matching notebook: {destination}")
+    return destination
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--suite", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--corpora", nargs="+")
+    parser.add_argument("--notebook", help="Write a matching, checksum-pinned notebook to this new path.")
     args = parser.parse_args()
-    create_bundle(ExperimentSuite(args.suite, args.corpora), args.output)
+    suite = ExperimentSuite(args.suite, args.corpora)
+    bundle = create_bundle(suite, args.output)
+    if args.notebook:
+        create_notebook(suite, bundle, args.notebook)
 
 
 if __name__ == "__main__":

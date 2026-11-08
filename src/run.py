@@ -9,6 +9,7 @@ Examples::
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import re
@@ -144,6 +145,40 @@ def expected_variants(config: dict) -> list[tuple[str, str, int | str]]:
         folder = label if counts[label] == 1 else f"{label}_{counts[label]}"
         output.append((folder, model_name, context_size if model_name.casefold() == "ffnn" else ""))
     return output
+
+
+def verify_prepared_inputs(config: dict) -> dict:
+    data = config["data"]
+    manifest_path = resolve_path(data["prepared_manifest"])
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("schema_version") != 1 or manifest.get("corpus") != data["corpus"]:
+        raise ValueError("Prepared input manifest has the wrong schema or corpus")
+    expected_settings = {
+        "split_seed": data.get("split_seed", 42),
+        "split_ratios": data["split_ratios"],
+        "tokenizer": canonical_tokenizer_name(data.get("tokenizer", "space")),
+        "lowercase": data.get("lowercase", True),
+    }
+    if manifest.get("settings") != expected_settings:
+        raise ValueError("Prepared input settings differ from the experiment config")
+    corpus_dir = resolve_path(data.get("output", "data/processed")) / data["corpus"]
+    files = manifest.get("files", {})
+    if not {"train.txt", "valid.txt", "test.txt"}.issubset(files):
+        raise ValueError("Prepared manifest must include train, validation, and test hashes")
+    for name, expected in files.items():
+        relative = Path(name)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError(f"Unsafe prepared input path: {name}")
+        target = corpus_dir / relative
+        digest = hashlib.sha256()
+        with target.open("rb") as stream:
+            for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+                digest.update(block)
+        if digest.hexdigest() != expected:
+            raise ValueError(f"Prepared input checksum mismatch: {target}")
+        if name in {"train.txt", "valid.txt", "test.txt"} and target.stat().st_size == 0:
+            raise ValueError(f"Prepared split is empty: {target}")
+    return manifest
 
 
 def verify_model_artifacts(config_path: Path, config: dict, percentages: list[float],
@@ -360,12 +395,21 @@ def run_full_config(config_path: str, percentages: tuple[float, ...], resume: bo
 
     orchestrator = project_root / "src/data-pipeline/data_orchestrator.py"
     tokenizer = canonical_tokenizer_name(config["data"].get("tokenizer", "space"))
-    print(f"[{corpus}] Prepare/load cached corpus once (use_cached={config['data'].get('use_cached', True)})", flush=True)
-    subprocess.run(
-        [sys.executable, str(orchestrator), "--config", str(config_path), "--token", tokenizer],
-        cwd=project_root,
-        check=True,
-    )
+    if config["data"].get("prepared_manifest"):
+        verify_prepared_inputs(config)
+        print(f"[{corpus}] Verified frozen local inputs; data preparation is disabled.", flush=True)
+    else:
+        print(f"[{corpus}] Prepare/load cached corpus once (use_cached={config['data'].get('use_cached', True)})", flush=True)
+        subprocess.run(
+            [sys.executable, str(orchestrator), "--config", str(config_path), "--token", tokenizer],
+            cwd=project_root,
+            check=True,
+        )
+
+    if config.get("execution", {}).get("colab_only"):
+        import torch
+        if not os.environ.get("COLAB_RELEASE_TAG") or not torch.cuda.is_available():
+            raise RuntimeError("This experiment may only fit models in a Colab GPU runtime")
 
     for percent in percentages:
         print(f"\n[{corpus}] Train all configured models at {percent:g}%", flush=True)
@@ -382,7 +426,8 @@ def run_full_config(config_path: str, percentages: tuple[float, ...], resume: bo
 
     comparison = project_root / "src/model_comparison.py"
     print(f"\n[{corpus}] Compare all percentage runs", flush=True)
-    subprocess.run([sys.executable, str(comparison), corpus], cwd=project_root, check=True)
+    subprocess.run([sys.executable, str(comparison), corpus, "--config", str(config_path)],
+                   cwd=project_root, check=True)
     missing = verify_model_artifacts(config_path, config, list(percentages), check_comparison=True)
     if missing:
         raise RuntimeError(f"Full result verification failed for {corpus}: {missing[:15]}")

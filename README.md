@@ -1,16 +1,92 @@
 # NLP Language-Model Experiments
 
-Word-level statistical and neural language models for the NLP assignment. The
-document-budget suite compares independently fitted models at cumulative training
-budgets of 10%, 20%, ..., 100%, using a vocabulary built only from each budget's
-training documents.
+## Final V3: Start Here
+
+Group 1, Problem Statement 1. The final study compares Brown, Gutenberg,
+Inaugural, Reuters, ROCStories and WebText at 20/40/60/80/100% prefixes of
+sorted training sentence lines, not whole-document budgets or random samples.
+Vocabulary is rebuilt from each prefix: Brown uses `min_freq=2`; the other five
+corpora use `min_freq=1`. Lowercase whitespace tokenization is shared.
+
+There are nine models: bigram/trigram MLE, add-one and absolute-discount backoff,
+FFNN context 1/context 2, and a sentence-prefix LSTM that resets per sentence,
+not a fixed four-word LSTM. Brown/Gutenberg/Inaugural/Reuters use neural seeds
+13/42/2026; ROCStories/WebText use 13 only. The final evidence comprises 210
+neural fits and 180 statistical conditions (390 test conditions), from 30 shared
+counting passes. Only 20 serialized count archives are retained; all ten
+Gutenberg/Inaugural archives are absent.
+
+Start with the [paper PDF](docs/paper/research_paper.pdf),
+[editable DOCX](docs/paper/paper_working_draft.docx),
+[manuscript source](docs/paper/paper_working_draft.md),
+[analysis evidence](docs/paper/analysis_and_paper_plan.md) and
+[source guide](src/README.md). Existing final runs are under
+`results/comparison_sweep_20261102_v3/full/runs/`; they are not the historical
+Brown press-only runs or the earlier document-budget pilot below.
+
+### Read-Only Analysis First
+
+Run from the repository root using an already provisioned environment outside
+OneDrive. These commands read small source/CSV/JSON metadata without training,
+fitting counts, loading checkpoints or running model inference. Rendering writes
+new analysis output, so choose a fresh `--out` directory.
+
+```sh
+/Users/ajoish/.venvs/nlp-lm/bin/python -B src/analyze_comparison_sweep.py --out results/v3_summary_review
+/Users/ajoish/.venvs/nlp-lm/bin/python -B src/analyze_comparison_sweep.py --pipeline --out results/v3_pipeline_review
+/Users/ajoish/.venvs/nlp-lm/bin/python -B src/analyze_comparison_sweep.py --architectures --out results/v3_architecture_review
+PYTHONPATH=src:src/tests /Users/ajoish/.venvs/nlp-lm/bin/python -B -m unittest test_analysis.AccuracyAnalysisTests -v
+```
+
+`--events`, `--accuracy` and `--laplace-audit` are also fit-free, but read large
+saved-event archives and/or training text; they are not small metadata checks.
+In contrast, the comparison script fits statistical counts and runs neural
+checkpoint inference. Training, comparison, preparation downloads, installs and
+broad test discovery are not required to inspect the final evidence.
+
+PPL includes EOS; word accuracy and OOV exclude EOS. Allowed predictions exclude
+PAD/BOS and include UNK/EOS. Mapped UNK accuracy is not lexical word recovery.
+Original neural event context coverage is null (unavailable), not zero; later
+accuracy audits reconstruct history membership from saved text/vocabularies.
+
+The group confirmed on 7 November 2026 that instructor approval was obtained
+for supplementary corpora and reporting the disclosed retained-overlap flags.
+No written approval record, instructor name or approval date was supplied.
+This confirmation does not establish statistical independence, zero near
+overlap or universal rubric compliance. The final group submission ZIP limit is
+10 MB; raw datasets, checkpoints and large scoring-event archives are excluded.
+Exact replay therefore requires separately retained matching inputs/artifacts.
+ZIP packaging is deferred at the group's request.
+
+### Complete Final Figures
+
+The implemented flag is `--final-figures`, checked against the current analyzer
+parser; the earlier anticipated name `--submission-figures` is not accepted.
+This metadata-only recipe requires all six corpora plus retained accuracy,
+Laplace and six-corpus analysis tables. It writes the fixed canonical output,
+not an arbitrary fresh `--out`; do not rerun it as a document check or overwrite
+existing evidence without authorization.
+
+```sh
+/Users/ajoish/.venvs/nlp-lm/bin/python -B src/analyze_comparison_sweep.py --final-figures --runs results/comparison_sweep_20261102_v3/full/runs --corpora brown gutenberg inaugural reuters roc-stories webtext --accuracy-input results/paper_accuracy_20261107 --out results/paper_submission_20261107
+```
+
+The main agent's planned paper output is `docs/paper/research_paper.pdf`;
+source/group ZIPs are produced separately under `submission/`. Preserve
+`src/colab/docs/results` relative paths. These are planned deliverables, not
+claims that this documentation pass exported a PDF or built archives.
 
 ## Start Here
 
 | Area | Guide |
 | --- | --- |
+| Retrospective one-page proposal | [Proposal](docs/submission/proposal.md) |
+| Corpus composition, preprocessing and limitations | [Dataset card](docs/submission/dataset_card.md) |
+| Public URLs, byte pins and data restoration | [Data access](docs/submission/data_access_instructions.md) |
+| Confirmed authors, equal contributions and AI disclosure | [Contributions and AI](docs/submission/contributions_and_ai.md) |
+| Runtime evidence, replay and submission boundaries | [Reproducibility](docs/submission/reproducibility.md) |
 | Google Colab pilot, private bundle and result retrieval | [Colab guide](colab/README.md) |
-| Local training, interactive CLI and saved artifacts | [Source guide](src/README.md) |
+| Final V3 commands, side effects and saved-artifact contracts | [Source guide](src/README.md) |
 | Model package, scoring contract and run lifecycle | [Model guide](src/lm/README.md) |
 | Configuration schemas and new experiment versions | [Configuration guide](src/configs/README.md) |
 | Synthetic tests and their limits | [Test guide](src/tests/README.md) |
@@ -18,13 +94,25 @@ training documents.
 | Required local corpus files and provenance | [Prepared-data guide](data/processed/readme.txt) |
 | Scientific protocol and remaining research work | [Experiment plan](docs/research_directions/data_efficiency/plan.md) |
 
+## Historical Pilot and Legacy Workflows
+
+Everything below describes earlier workflows, not the final V3 design.
+Training/evaluation examples have side effects and are documentation only;
+do not run them as submission checks. Preserve their separate output roots.
+
+For the approved Inaugural validation-stopping experiment (18 neural fits,
+three budgets, three seeds), use the separate
+[follow-up Colab workflow](colab/README.md#inaugural-validation-stopping-follow-up).
+It quarantines cross-split exact sentence matches in derived data, preserves the
+pilot, and reports validation plateaus separately from epoch-limited runs.
+
 Run the commands below from the repository root. Python 3.12 is recommended for
 local execution; the completed Colab pilot used Python 3.13 and a Tesla T4.
 
 ```sh
 uv venv ~/.venvs/nlp-lm --python 3.12
 uv pip install --python ~/.venvs/nlp-lm/bin/python -r src/requirements.txt
-PYTHONPATH=src ~/.venvs/nlp-lm/bin/python -B -m unittest discover -s src/tests -v
+PYTHONPATH=src:src/tests ~/.venvs/nlp-lm/bin/python -B -m unittest test_analysis.AccuracyAnalysisTests -v
 ~/.venvs/nlp-lm/bin/python src/run.py --suite src/configs/data_efficiency_nltk_pilot.yaml --stage all --dry-run
 ```
 

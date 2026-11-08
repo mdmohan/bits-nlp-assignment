@@ -44,6 +44,11 @@ def _training_plot(directory):
     figure, axis = plt.subplots(figsize=(7, 4))
     axis.plot(history["epoch"], history["train_ppl"], marker="o", label="Training")
     axis.plot(history["epoch"], history["valid_ppl"], marker="o", label="Validation")
+    result = _read(directory / "result.json")
+    if result.get("best_epoch") is not None:
+        axis.axvline(result["best_epoch"], color="green", linestyle="--", label="Best checkpoint")
+        if result["epochs_trained"] != result["best_epoch"]:
+            axis.axvline(result["epochs_trained"], color="grey", linestyle=":", label="Last executed")
     axis.set(xlabel="Epoch", ylabel="Perplexity", title=str(directory.parent.name) + " / " + directory.name)
     axis.set_xticks(history["epoch"])
     axis.legend()
@@ -66,6 +71,13 @@ def _summary(metrics):
                 record["ppl_std"] = float(group["perplexity"].std(ddof=1))
         for column in ("accuracy", "oov_rate", "vocab_size", "parameters", "train_seconds", "zero_probability_events", "train_tokens", "process_peak_rss_mb"):
             record[column] = float(group[column].mean())
+        for column in ("valid_seconds", "test_seconds", "best_epoch", "epochs_trained",
+                       "training_target_events_processed", "training_word_tokens_processed"):
+            if column in group:
+                record[column] = float(group[column].mean())
+        if "convergence_status" in group:
+            record["plateau_seeds"] = int(group["convergence_status"].eq("validation_plateau").sum())
+            record["budget_limited_seeds"] = int(group["convergence_status"].eq("budget_limited").sum())
         rows.append(record)
     return pd.DataFrame(rows)
 
@@ -139,6 +151,14 @@ def build_report(output):
                        "- [Configuration](config.yaml)", "- [Vocabulary](vocab.json)", "- [Epoch history](history.csv)",
                        "- [Result and provenance](result.json)", "- [Validation metrics](validation_metrics.json)",
                        f"- [Checkpoint]({result['checkpoint']})", f"- [Execution log]({result['attempt']}/run.log)"]
+        if result.get("best_epoch") is not None:
+            description.extend([
+                "",
+                f"Restored best epoch: {result['best_epoch']}; last executed epoch: {result['epochs_trained']}.",
+                f"Stopping: {result['stop_reason']}; status: {result['convergence_status']}.",
+                f"Validation NLL: best {result['best_valid_nll']}; last {result['last_valid_nll']}.",
+                "A validation plateau is a stopping-policy outcome, not proof of mathematical convergence.",
+            ])
         if (directory / "training.png").exists():
             description.extend(["", "![Training and validation perplexity](training.png)"])
         if (directory / "test_metrics.json").exists():
@@ -158,6 +178,8 @@ def build_report(output):
     sections.append("<p>Whole-document rounding can repeat subsets at adjacent percentages. See each budget's alias_of_percent and document_count. WebText's approved repair preserves original test bytes and excludes overlapping training source groups; retained raw/cleaned variants keep the original weighting within groups.</p>")
     if purpose == "pilot":
         sections.append("<p><strong>Short-epoch pilot. These results do not establish convergence or final research conclusions.</strong></p>")
+    else:
+        sections.append("<p>Neural checkpoints are selected on validation loss, not test scores. A patience stop indicates a validation plateau under this policy; a maximum-epoch stop is budget-limited, not established convergence. Seed standard deviations use the sample definition and measure initialization variability on one fixed split, not dataset uncertainty.</p>")
     if rows:
         metrics_frame = _ordered_table(pd.DataFrame(rows))
         summary = _ordered_table(_summary(metrics_frame))
@@ -191,7 +213,23 @@ def build_report(output):
             if not smoothing.empty:
                 _curve(smoothing, "ppl_mean", figure_directory / "smoothing_ablation.png", "Perplexity", f"{corpus}: smoothing ({split})")
             display_columns = ["budget_percent", "model", "seeds", "finite_seeds", "ppl_mean", "ppl_std", "accuracy", "vocab_size", "oov_rate", "status"]
+            display_columns.extend(column for column in (
+                "parameters", "train_seconds", "valid_seconds", "test_seconds",
+                "plateau_seeds", "budget_limited_seeds",
+            ) if column in selected)
             sections.append(selected[display_columns].to_html(index=False, escape=True, na_rep="infinite / unavailable", float_format=lambda value: f"{value:.5g}"))
+        run_frame = _ordered_table(pd.DataFrame(wide_rows))
+        if "best_epoch" in run_frame:
+            neural = run_frame.loc[run_frame["family"] == "neural"]
+            columns = [column for column in (
+                "corpus", "budget_percent", "model", "seed", "valid_ppl", "test_ppl",
+                "best_epoch", "epochs_trained", "stop_reason", "convergence_status",
+                "best_valid_nll", "last_valid_nll", "parameters", "train_seconds",
+                "valid_seconds", "test_seconds", "training_target_events_processed",
+                "training_word_tokens_processed",
+            ) if column in neural]
+            sections.append("<h2>Neural Checkpoint Selection And Cost</h2>")
+            sections.append(neural[columns].to_html(index=False, escape=True, na_rep="unavailable"))
     else:
         sections.append("<p>No completed final runs yet.</p>")
     sections.append("<h2>Corpus Eligibility</h2><pre>" + html.escape(json.dumps(corpus_status, indent=2)) + "</pre>")

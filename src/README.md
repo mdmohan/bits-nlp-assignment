@@ -1,8 +1,186 @@
-# Neural Language Models (PS-1)
+# Language Models and Analysis (Group 1, PS1)
 
-A small, generic PyTorch framework for training and comparing next-word language models.
-Any dataset and any model can be plugged in; the first experiment compares a
-**feed-forward neural LM** and an **LSTM LM** on the NLTK Brown corpus.
+## Final V3 Entry Points
+
+Final V3 covers Brown/Gutenberg/Inaugural/Reuters/ROCStories/WebText,
+20/40/60/80/100% prefixes of sorted training sentence lines, nine models,
+210 neural fits and 180 statistical conditions. Vocabulary is rebuilt per
+budget: Brown `min_freq=2`, other five 1. Four corpora use seeds 13/42/2026;
+ROCStories/WebText use 13 only. The LSTM uses the available sentence prefix and
+resets per sentence, not a fixed four-word context. Historical examples later
+in this file are not V3 results or submission checks.
+
+Read the [root guide](../README.md), [dataset card](../docs/submission/dataset_card.md),
+[data access](../docs/submission/data_access_instructions.md) and
+[reproducibility](../docs/submission/reproducibility.md) first. Commands below
+run from the repository root using an already provisioned environment outside
+OneDrive. Fitting/download/inference examples are procedures only, not actions
+to run while checking documentation.
+
+| Entry point | Input/output contract | Side effects |
+|---|---|---|
+| [analyze_comparison_sweep.py](analyze_comparison_sweep.py) | Run CSV/JSON, optional events/prepared text; analysis tables/figures/check JSON | No fitting/checkpoint load/inference; some modes read large events |
+| [prepare_mega_run.py](prepare_mega_run.py) | Registry/configs -> versioned source/parsed/split/provenance snapshot and frozen configs | Downloads and writes data; audits/bundles also write; no LM fit |
+| [run.py](run.py) | Positional neural config, frozen `--full` manifest or legacy `--suite` -> configured run roots | Neural training; full mode also compares/fits counts/infers; unfrozen inputs can be downloaded/prepared |
+| [model_comparison.py](model_comparison.py) | Corpus/config plus signed neural artifacts and exact training snapshots -> metrics/events/plots/count archives | Fits counts, loads/runs neural weights; not read-only |
+| [Kubeflow sweep](run_kubeflow_sweep.py) / [recovery](run_kubeflow_recovery.py) | Frozen workspace -> separate output and execution provenance | GPU training/comparison unless plan-only; verified artifacts required for recovery |
+| [controller](lm/controller.py), [data](lm/data.py), [trainer](lm/neural/trainer.py) | Sentence lines -> prefix vocabulary/batches -> best weights/history/metrics | Controller/trainer fit neural models; data defines boundary/token semantics |
+| [FFNN](lm/neural/ffnn/__init__.py), [LSTM](lm/neural/lstm/__init__.py), [registry](lm/neural/__init__.py) | `(batch, sequence)` IDs -> causal `(batch, sequence, vocabulary)` logits | Model execution; trainer/evaluator applies PAD/BOS masking |
+| [evaluator](lm/evaluation.py), [n-grams](lm/statistical/ngram.py) | Shared vocabulary/support -> word accuracy/OOV and EOS-inclusive PPL/zero events | Scoring executes models; count construction fits frequencies |
+| [tokenizer diagnostic](analyze_tokenizer_vocab.py) | Existing line-based text -> stdout token/type counts | Fit-free, no download, three text scans |
+| [neural artifact audit](audit_neural_artifacts.py) | Frozen workspace/run root -> status/audit JSON | Loads checkpoints and validates strict state; not metadata-only |
+
+### Small Read-Only Analysis
+
+```sh
+/Users/ajoish/.venvs/nlp-lm/bin/python -B src/analyze_comparison_sweep.py --runs results/comparison_sweep_20261102_v3/full/runs --corpora brown gutenberg inaugural reuters roc-stories webtext --out results/v3_summary_review
+/Users/ajoish/.venvs/nlp-lm/bin/python -B src/analyze_comparison_sweep.py --pipeline --out results/v3_pipeline_review
+/Users/ajoish/.venvs/nlp-lm/bin/python -B src/analyze_comparison_sweep.py --architectures --out results/v3_architecture_review
+PYTHONPATH=src:src/tests /Users/ajoish/.venvs/nlp-lm/bin/python -B -m unittest test_analysis.AccuracyAnalysisTests -v
+```
+
+Default mode reads metrics, budget statistics and neural histories, not scoring
+archives. `--runs` selects the run tree; `--corpora` selects keys; `--out` writes
+new analysis. `--pipeline` renders preparation-to-analysis and phase/source
+diagrams. `--architectures` reads saved Inaugural parameter/vocabulary metadata
+and existing Torch-summary TXT/HTML/PNG, not weights or their inspection
+generator. These two modes return independently and cannot combine with event
+audits. Do not use broad unittest discovery: other tests fit models.
+
+### Saved-Event Audits: Fit-Free, Not Small Reads
+
+These recipes require separately retained large events and prepared text/
+vocabularies. They are not lightweight submission checks.
+
+```sh
+/Users/ajoish/.venvs/nlp-lm/bin/python -B -u src/analyze_comparison_sweep.py --events --corpora brown gutenberg inaugural reuters roc-stories webtext --cases-per-type 2 --out results/v3_event_review
+/Users/ajoish/.venvs/nlp-lm/bin/python -B -u src/analyze_comparison_sweep.py --accuracy --corpora brown gutenberg inaugural reuters roc-stories webtext --prepared results/comparison_refresh_20261102_v1/processed --out results/v3_accuracy_review
+/Users/ajoish/.venvs/nlp-lm/bin/python -B -u src/analyze_comparison_sweep.py --laplace-audit --corpora brown gutenberg inaugural reuters roc-stories webtext --accuracy-input results/v3_accuracy_review --out results/v3_laplace_review
+```
+
+`--events` adds event/metric checks, sparsity categories, fixed cohorts and
+cases; `--skip-summary` suppresses ordinary summary generation on this route.
+`--accuracy` writes word/context tables and `accuracy_checks.json`.
+`--laplace-audit` uses validated accuracy tables and events for uniform UNK tie
+attribution/accuracy-only baselines; it changes neither predictions nor PPL.
+Accuracy and Laplace modes are separate invocations. Original neural event
+context coverage is null/unavailable; later membership is reconstructed,
+not interpreted as zero coverage.
+
+### Complete Final Figures
+
+The current parser implements `--final-figures`, not the anticipated
+`--submission-figures`. Flag/parameter names and routing were checked against
+the final-figure source on 7 November 2026; this docs task did not execute it.
+
+```sh
+/Users/ajoish/.venvs/nlp-lm/bin/python -B src/analyze_comparison_sweep.py --final-figures --runs results/comparison_sweep_20261102_v3/full/runs --corpora brown gutenberg inaugural reuters roc-stories webtext --accuracy-input results/paper_accuracy_20261107 --out results/paper_submission_20261107
+```
+
+This mode requires canonical V3 `--runs`, all six corpora exactly once, and
+canonical `results/paper_submission_20261107` output. Omitting `--out` selects
+that output; arbitrary fresh output paths are rejected. It is separate from
+pipeline/architecture/event/accuracy/Laplace modes. It reads named small run
+CSV/JSON, accuracy tables, six-corpus category/loss tables under
+`results/paper_v3_six_corpora_20261106/`, Laplace tables under
+`results/paper_laplace_audit_20261107/`, recovery allocation metadata and an
+existing ratio PNG. It does not open events, weights or training text.
+
+Outputs are the complete PNG/PDF figure set, 13 CSVs under `tables/` including
+`test_metrics_by_condition.csv`, `test_metrics_seed_summary.csv`,
+`budget_data_sizes.csv`, `neural_convergence_by_condition.csv`,
+`recorded_cost_by_budget.csv`, `runtime_provenance.csv`, context/tie/category/
+loss tables and `field_definitions.csv`, plus `graph_checks.json` with input/
+output hashes, reconciliation and missing-evidence statements. Cost is recorded
+wall time, not hardware-normalized. Do not sum six copies of shared count-fit
+time. The existing six-corpus ratio figure is referenced, not copied. Canonical
+output can be rewritten, so do not rerun as a docs check or overwrite evidence
+without authorization.
+
+### Preparation and Frozen GPU Training
+
+These procedures download/write inputs or fit models; do not execute them for
+submission checks or rebuild the completed V3 snapshot.
+
+```sh
+# Data-only plan: no download, audit, bundle or model fitting.
+PYTHONPATH=src /Users/ajoish/.venvs/nlp-lm/bin/python -B src/prepare_mega_run.py --output results/v3_new_preparation --corpora brown gutenberg inaugural reuters roc-stories webtext --dry-run
+# New version only: acquisition/preparation/audits write and may download data.
+PYTHONPATH=src /Users/ajoish/.venvs/nlp-lm/bin/python -B -u src/prepare_mega_run.py --output results/v3_new_preparation --corpora brown gutenberg inaugural reuters roc-stories webtext --audit --accept-near-duplicates
+# Colab GPU only, with matching frozen inputs/runtime and relocated new output paths.
+python -B -u src/run.py --full results/comparison_refresh_20261102_v1/mega-run.yaml --parallelism 1
+```
+
+`--accept-near-duplicates` permits an audit-only policy, not instructor approval,
+independence or a claim that every near scan ran. `--bundle <path>` optionally
+creates the large private frozen bundle, excluded from the 10 MB submission.
+Frozen `data.prepared_manifest` invokes hash/settings checks and bypasses the
+orchestrator; unfrozen full configs can prepare/download data. `--full` uses
+manifest budgets, accepts `--resume`, rejects per-run seed/algorithm/token/
+context overrides and `--dry-run`. `--parallelism` runs whole corpus workers,
+not automatic multi-GPU allocation. Saved absolute paths must be relocated in
+an explicit runtime copy; do not execute the example against completed outputs.
+
+The [frozen notebook](../colab/comparison_sweep_frozen.ipynb) contains historical
+recovery/comparison cells: do not use Run All on a completed study. Kubeflow
+launchers accept `--workspace`, `--output`, `--plan-only`; the sweep accepts
+`--resume-audit` only with a completed matching artifact audit. Plan-only avoids
+fitting but hash verification can read large inputs. Runtime adaptations and
+import receipts are distinct from scientific configuration. Final completion
+and replay limits are in [reproducibility](../docs/submission/reproducibility.md).
+
+### Comparison and Text Diagnostics
+
+```sh
+# Authorized GPU runtime only; matching config must point to the intended new/preserved run root.
+python -B -u src/model_comparison.py brown --config results/comparison_refresh_20261102_v1/configs/brown.yaml --device cuda
+# Fit-free diagnostic on available text; three scans, stdout only.
+/Users/ajoish/.venvs/nlp-lm/bin/python -B src/analyze_tokenizer_vocab.py results/comparison_refresh_20261102_v1/processed/brown/train.txt --progress-every 0
+```
+
+Comparison's actual options are positional corpus, `--config`, optional
+`--device`. It fits one trigram table per budget, derives six statistical
+views, loads neural weights, scores fixed splits and separate rare probes,
+and can replace metrics. It does not train neural weights but is not read-only.
+Tokenizer diagnostics default to lowercase, accept `--case-sensitive` and
+`--progress-every`, and report whitespace/WordPunct/Treebank counts without
+changing the final tokenizer. Neural artifact audit accepts `--workspace`,
+`--drive-root`, `--output` and loads weights. Interactive `ngram`, `nn load`,
+`predict`, `compare` and Torch-summary generation likewise fit or infer; they
+are not metadata/document checks.
+
+### Final Model and Artifact Contract
+
+Corpus directories under `results/comparison_sweep_20261102_v3/full/runs/` are
+`brown_press_neural`, `gutenberg_neural`, `inaugural_neural`, `reuters_neural`,
+`roc-stories`, `webtext-nn`. At `train_<percent>pct/`, `train.txt` is the exact
+prefix; budget config/vocabulary/data stats and `runs.csv`/`summary.csv` record
+identity. `models/{ffnn_ctx1,ffnn_ctx2,lstm}/` co-locates config/vocabulary,
+signed seed result JSON, per-epoch histories and best `.pt` weights. Result
+JSON alone does not make missing weights replayable.
+
+`metrics/` holds aggregate `metrics.csv`, prediction CSVs, trend/fixed-budget
+PNG, `scoring_events.jsonl.gz`, `event_verification.json`, `artifact_manifest.json`.
+Events record split/budget/model/seed, sentence/token positions, raw/mapped
+targets, EOS/OOV, predictions/log probabilities. Frequency-weighted rare probes
+are separate from ordinary sentence events. Zero-probability MLE means infinite
+PPL, not clipping. `train_<percent>pct/count_models.pkl.gz` stores counts where
+present: 20 retained archives, all ten Gutenberg/Inaugural archives absent.
+
+FFNN histories 1/2 use embedding 128, hidden 256, tanh, dropout 0.3. LSTM uses
+embedding 128, hidden 256, one recurrent layer, dropout 0.3 on embeddings/outputs.
+Training uses Adam 0.001, clip 1, up to 32 sentences per batch, maximum 20 epochs,
+strict validation-NLL best weights and patience 3. Reserved IDs are PAD0/UNK1/
+BOS2/EOS3; predictions exclude PAD/BOS and include UNK/EOS. PPL includes EOS;
+accuracy/OOV exclude EOS. Source/group ZIPs omit data/weights/large events and
+preserve `src/colab/docs/results` paths; inspection is not full exact replay.
+
+## Historical and Generic Workflows
+
+The remaining sections preserve the earlier individual Brown experiment,
+generic CLI and document-budget pilot. Their settings/results are not Final V3.
+Setup/training/checkpoint examples have side effects and are not submission
+checks. Requirements are lower bounds, not an original training lock.
 
 ## Project layout
 
@@ -416,7 +594,7 @@ Historical rare-ngrams CSVs use a different tokenizer and are not relabelled as 
 diagnostics.
 
 ```sh
-PYTHONPATH=src ~/.venvs/nlp-lm/bin/python -B -m unittest discover -s src/tests -v
+PYTHONPATH=src:src/tests ~/.venvs/nlp-lm/bin/python -B -m unittest test_analysis.AccuracyAnalysisTests -v
 ```
 
 The seven-corpus rollout and research acceptance gates remain separate from this

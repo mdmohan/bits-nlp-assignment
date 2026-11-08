@@ -2,6 +2,7 @@ import contextlib
 import csv
 import io
 import json
+import math
 import tempfile
 import unittest
 import zipfile
@@ -22,7 +23,8 @@ class ExperimentTests(unittest.TestCase):
             config = {
                 "schema_version": 1, "name": "tiny_pilot", "purpose": "pilot",
                 "output_root": str(root / "results"), "budgets_percent": [10, 100],
-                "prepared_data": {"rebuild": False}, "vocab": {"mode": "per_budget", "min_freq": 2},
+                "prepared_data": {"rebuild": False, "sentence_quarantine": "test_then_validation_v1"},
+                "vocab": {"mode": "per_budget", "min_freq": 2},
                 "corpora": {"tiny": entry}, "device": "cpu",
                 "training": {"epochs": 1, "batch_size": 4},
                 "models": [
@@ -68,6 +70,32 @@ class ExperimentTests(unittest.TestCase):
                 self.assertEqual(result["tokens"], 21)
                 self.assertEqual(result["word_tokens"], 15)
             self.assertTrue((root / "results" / "seal.json").exists())
+            for result_path in (root / "results").glob("tiny/budget_*/final/*/seed*/result.json"):
+                record = json.loads(result_path.read_text())
+                self.assertGreater(record["train_unk_tokens"], 0)
+                self.assertEqual(record["train_unk_tokens"], record["train_unk_target_events"])
+                self.assertEqual(record["train_unk_tokens"], record["train_unk_input_tokens"])
+                self.assertAlmostEqual(record["train_unk_rate"], record["train_unk_tokens"] / record["train_tokens"])
+                self.assertAlmostEqual(record["valid_oov_rate"], record["valid_oov_tokens"] / record["valid_word_tokens"])
+                if record["family"] == "neural":
+                    self.assertEqual(record["best_epoch"], 1)
+                    self.assertEqual(record["last_epoch"], 1)
+                    self.assertEqual(record["epochs_trained"], 1)
+                    self.assertEqual(record["stop_reason"], "max_epochs")
+                    self.assertEqual(record["convergence_status"], "budget_limited")
+                    self.assertTrue(math.isfinite(record["best_valid_nll"]))
+                    self.assertAlmostEqual(record["valid_nll"], record["best_valid_nll"], places=5)
+                    self.assertEqual(record["training_target_events_processed"], record["train_prediction_events"])
+                    self.assertEqual(record["training_word_tokens_processed"], record["train_tokens"])
+                    with (result_path.parent / "history.csv").open(newline="") as stream:
+                        history = list(csv.DictReader(stream))
+                    self.assertIn("train_nll", history[0])
+                    self.assertIn("valid_nll", history[0])
+                    self.assertIn("train_tokens", history[0])
+                    self.assertIn("valid_tokens", history[0])
+                    self.assertIn("train_seconds", history[0])
+                    self.assertIn("valid_seconds", history[0])
+                suite.verify_run(result_path.parent)
             with contextlib.redirect_stdout(io.StringIO()):
                 bundle = create_bundle(suite, root / "colab.zip")
             with zipfile.ZipFile(bundle) as archive:

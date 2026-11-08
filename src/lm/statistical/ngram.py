@@ -69,6 +69,8 @@ class NgramLM:
             raise ValueError("order and vocab_size must be positive")
         if smoothing == "laplace" and (not math.isfinite(k) or k <= 0):
             raise ValueError("add-k must be finite and positive")
+        if smoothing in {"backoff", "kn"} and (not math.isfinite(discount) or not 0 <= discount < 1):
+            raise ValueError("absolute discount must be finite and in [0, 1)")
         self.target_ids = tuple(range(vocab_size))
         if allowed_target_ids is not None:
             self.target_ids = tuple(sorted(set(allowed_target_ids)))
@@ -158,6 +160,8 @@ class NgramLM:
             return self._p_backoff(g[1:])
 
         count = self.ngram_counts[n][g]
+        if len(self.cont_following[n].get(ctx, ())) == self.V:
+            return count / denom
         if count > 0:
             return max(count - self.d, 0.0) / denom
         return self._alpha(n, ctx) * self._p_backoff(g[1:])

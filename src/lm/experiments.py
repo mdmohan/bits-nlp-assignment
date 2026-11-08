@@ -26,11 +26,16 @@ from .data import Vocab, make_loader
 from .evaluation import evaluate_model, original_counts
 from .neural import MODELS, build_model, count_parameters
 from .neural.trainer import Trainer, TrainConfig, get_device, set_seed
-from .preparation import PreparationError, atomic_json, file_sha256, fingerprint, prepare_corpus, repair_variant_overlap, sentences_for, source_hashes
+from .preparation import PreparationError, atomic_json, file_sha256, fingerprint, prepare_corpus, repair_variant_overlap, sentences_for, source_hashes, verify_prepared_manifest
 
 
 def _now():
     return datetime.now(timezone.utc).isoformat()
+
+
+def _finite_metrics(values):
+    return {key: None if isinstance(value, float) and not math.isfinite(value) else value
+            for key, value in values.items()}
 
 
 def _sync(device):
@@ -104,6 +109,8 @@ class ExperimentSuite:
             raise ValueError("Expected suite schema_version: 1")
         if config.get("prepared_data", {}).get("rebuild") is not False:
             raise ValueError("prepared_data.rebuild must explicitly be false")
+        if config["prepared_data"].get("sentence_quarantine") not in (None, "test_then_validation_v1"):
+            raise ValueError("Unknown opt-in sentence quarantine policy")
         if config.get("vocab", {}).get("mode") != "per_budget" or config["vocab"].get("max_size") is not None:
             raise ValueError("This protocol requires uncapped per-budget training-only vocabularies")
         if not isinstance(config["vocab"].get("min_freq", 2), int) or config["vocab"].get("min_freq", 2) < 1:
@@ -190,7 +197,9 @@ class ExperimentSuite:
                     raise PreparationError("Prepared partition manifest differs from its verified input bundle")
             manifest = json.loads(path.read_text())
             manifest["index"] = str(index_directory / "sentences.sqlite")
-            if file_sha256(manifest["index"]) != manifest["index_sha256"]:
+            if manifest.get("schema_version") == 2:
+                verify_prepared_manifest(manifest)
+            elif file_sha256(manifest["index"]) != manifest["index_sha256"]:
                 raise PreparationError("Packaged sentence index checksum mismatch")
             return manifest
         return prepare_corpus(
@@ -200,6 +209,7 @@ class ExperimentSuite:
             lowercase=self.config.get("preprocessing", {}).get("lowercase", True),
             max_sentence_tokens=self.limits["max_sentence_tokens"],
             near_duplicate_threshold=self.config.get("near_duplicate_threshold", 0.9),
+            sentence_quarantine=self.config.get("prepared_data", {}).get("sentence_quarantine"),
         )
 
     def preflight(self, prepare=False):
@@ -209,6 +219,13 @@ class ExperimentSuite:
                 if prepare or self.config.get("prepared_data", {}).get("packaged_only"):
                     manifest = self._prepared(corpus)
                     report[corpus] = {"status": "prepared", "fingerprint": manifest["fingerprint"]}
+                    sentence_audit = manifest["duplicate_audit"].get("sentences")
+                    if sentence_audit:
+                        report[corpus].update(sentence_near_duplicate_status=sentence_audit["status"],
+                                              sentence_near_duplicate_pairs=sentence_audit["pair_count"],
+                                              sentence_near_duplicate_review_required=sentence_audit["review_required"])
+                        print(f"{corpus}: sentence near-duplicate audit: {sentence_audit['status']} "
+                              f"({sentence_audit['pair_count']} pairs; audit only, no removal)", flush=True)
                 else:
                     hashes = source_hashes(self._entry(corpus))
                     report[corpus] = {"status": "ready_for_preparation", "sources": hashes}
@@ -238,13 +255,26 @@ class ExperimentSuite:
         atomic_json(directory / "vocab.json", vocab.itos)
         pd.DataFrame(counts.most_common(), columns=["word", "training_count"]).to_csv(directory / "vocab_counts.csv", index=False)
         allocation = next(budget for budget in manifest["budgets"] if budget["percent"] == percent)
+        train_tokens = sum(counts.values())
+        train_unk_tokens = sum(count for word, count in counts.items() if word not in vocab)
+        valid_word_tokens = sum(length - 2 for length in valid.lengths)
+        test_word_tokens = sum(length - 2 for length in test.lengths)
+        valid_oov_tokens = sum(word not in vocab for sentence in valid for word in sentence)
+        test_oov_tokens = sum(word not in vocab for sentence in test for word in sentence)
         stats = {"corpus": corpus, "budget_percent": percent, "documents": allocation["documents"],
                  "alias_of_percent": allocation.get("alias_of_percent"),
                  "document_count": len(allocation["documents"]), "train_sentences": len(train),
-                 "train_tokens": sum(counts.values()), "train_prediction_events": events,
+                 "train_tokens": train_tokens, "train_prediction_events": events,
+                 "train_unk_tokens": train_unk_tokens, "train_unk_rate": train_unk_tokens / train_tokens,
+                 "train_unk_target_events": train_unk_tokens, "train_unk_input_tokens": train_unk_tokens,
+                 "train_unk_target_rate": train_unk_tokens / events,
+                 "unk_exposure_policy": "record_only_training_min_freq_mapping",
                  "valid_sentences": len(valid), "test_sentences": len(test), "vocab_size": len(vocab),
                  "vocab_hash": vocab.fingerprint, "allowed_target_ids": vocab.allowed_target_ids,
-                 "valid_oov_rate": vocab.oov_rate(valid), "test_oov_rate": vocab.oov_rate(test),
+                 "valid_word_tokens": valid_word_tokens, "test_word_tokens": test_word_tokens,
+                 "valid_oov_tokens": valid_oov_tokens, "test_oov_tokens": test_oov_tokens,
+                 "valid_oov_rate": valid_oov_tokens / valid_word_tokens,
+                 "test_oov_rate": test_oov_tokens / test_word_tokens,
                  "prepared_fingerprint": manifest["fingerprint"], "subset_hash": fingerprint(allocation["documents"])}
         atomic_json(directory / "data_stats.json", stats)
         return directory, train, valid, test, vocab, stats
@@ -292,6 +322,7 @@ class ExperimentSuite:
                     print(f"Run: {directory.relative_to(self.output)} | seed {seed} | value {value} | device {self.device}", flush=True)
                     set_seed(seed)
                     history = []
+                    fit_summary = {}
                     checkpoint = None
                     if spec["family"] == "neural":
                         model_name = spec.get("model", spec["id"])
@@ -313,6 +344,7 @@ class ExperimentSuite:
                         recorded = []
 
                         def record_epoch(row, fitted_model):
+                            row = _finite_metrics(row)
                             recorded.append(row)
                             pd.DataFrame(recorded).to_csv(attempt / "history.csv", index=False)
                             _save_weights(fitted_model, attempt / "latest.pt")
@@ -323,6 +355,8 @@ class ExperimentSuite:
                         _sync(self.device)
                         started = time.perf_counter()
                         history = trainer.fit(train_loader, valid_loader, epoch_callback=record_epoch)
+                        history = [_finite_metrics(row) for row in history]
+                        fit_summary = _finite_metrics(trainer.fit_summary)
                         _sync(self.device)
                         train_seconds = time.perf_counter() - started
                         _save_weights(model, directory / checkpoint)
@@ -356,6 +390,7 @@ class ExperimentSuite:
                               "valid_status": validation["status"], "valid_tokens": validation["tokens"],
                               "checkpoint": checkpoint, "environment": self.environment_id,
                               "process_peak_rss_mb": rss / 1024, "attempt": str(attempt.relative_to(directory))}
+                    result.update(fit_summary)
                     if self.device.type == "cuda" and spec["family"] == "neural":
                         result["peak_cuda_memory_mb"] = torch.cuda.max_memory_allocated(self.device) / 1024 ** 2
                     atomic_json(directory / "validation_metrics.json", validation)
@@ -363,7 +398,9 @@ class ExperimentSuite:
                     atomic_json(directory / "vocab.json", vocab.itos)
                     atomic_json(directory / "data_stats.json", stats)
                     (directory / "config.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
-                    pd.DataFrame(history, columns=["epoch", "train_ppl", "valid_ppl", "seconds"]).to_csv(directory / "history.csv", index=False)
+                    history_frame = pd.DataFrame(history) if history else pd.DataFrame(
+                        columns=["epoch", "train_ppl", "valid_ppl", "seconds"])
+                    history_frame.to_csv(directory / "history.csv", index=False)
             artifacts = {name: file_sha256(directory / name) for name in
                          (checkpoint, "result.json", "validation_metrics.json", "vocab.json", "data_stats.json", "config.yaml", "history.csv")}
             for name in ("run.log", "history.csv", "latest.pt"):

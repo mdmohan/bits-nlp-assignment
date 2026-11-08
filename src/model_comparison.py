@@ -15,7 +15,10 @@ from __future__ import annotations
 
 import argparse
 import csv
+import gzip
+import json
 import math
+import pickle
 import re
 import sys
 import time
@@ -70,7 +73,19 @@ def project_path(value: str | Path, root: Path = PROJECT_ROOT) -> Path:
     return path.resolve() if path.is_absolute() else (root / path).resolve()
 
 
-def load_corpus_config(corpus: str) -> tuple[dict, Path]:
+def display_path(path: Path) -> Path:
+    if path.is_relative_to(PROJECT_ROOT):
+        return path.relative_to(PROJECT_ROOT)
+    return path
+
+
+def load_corpus_config(corpus: str, explicit_path: str | Path | None = None) -> tuple[dict, Path]:
+    if explicit_path is not None:
+        path = project_path(explicit_path)
+        config = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if (config.get("data") or {}).get("corpus") != corpus:
+            raise ValueError(f"{path} does not configure data.corpus={corpus!r}")
+        return config, path
     config_dir = PROJECT_ROOT / "src/configs"
     direct = config_dir / f"{corpus}.yaml"
     candidates = [direct] if direct.is_file() else []
@@ -218,9 +233,90 @@ def report_progress(label: str, source: str, started: float, state: dict) -> Non
         state["last"] = now
 
 
+def write_full_event(handle, event: dict, vocab: Vocab, metadata: dict) -> None:
+    position = event["position"]
+    raw_target = EOS
+    if not event["eos"]:
+        raw_target = event["words"][position]
+    log_probability = event["log_probability"]
+    zero_probability = log_probability == -math.inf
+    if not zero_probability and not math.isfinite(log_probability):
+        raise ValueError("Invalid non-finite token log probability")
+    stored_probability = log_probability
+    if zero_probability:
+        stored_probability = None
+    record = {**metadata, "sentence_index": event["sentence_index"], "position": position,
+              "raw_target": raw_target, "target_id": event["target"],
+              "mapped_target": vocab.itos[event["target"]], "prediction_id": event["prediction"],
+              "correct": event["target"] == event["prediction"], "eos": event["eos"],
+              "oov": not event["eos"] and raw_target not in vocab,
+              "context_covered": event.get("covered"), "log_probability": stored_probability,
+              "zero_probability": zero_probability, "weight": 1}
+    handle.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
+
+
+def verify_scoring_events(metrics_path: Path, events_path: Path) -> dict:
+    with metrics_path.open(newline="") as handle:
+        rows = [row for row in csv.DictReader(handle) if row["source"] in {"train", "valid", "test"}]
+    def key(row):
+        return (float(row["percent"]), row["model"], str(row["seed"]), row["source"])
+    expected = {key(row): row for row in rows}
+    if len(expected) != len(rows):
+        raise ValueError("Duplicate base metric conditions")
+    aggregates = {}
+    with gzip.open(events_path, "rt", encoding="utf-8") as handle:
+        for line in handle:
+            event = json.loads(line)
+            condition = key(event)
+            if condition not in expected:
+                raise ValueError(f"Unexpected scoring event condition: {condition}")
+            totals = aggregates.setdefault(condition, dict(events=0, words=0, correct=0, oov=0,
+                                                          zeros=0, nll=0.0, sentences=0, position=0))
+            if event["sentence_index"] != totals["sentences"] or event["position"] != totals["position"]:
+                raise ValueError(f"Missing or repeated scoring occurrence: {condition}")
+            totals["events"] += 1
+            totals["zeros"] += int(event["zero_probability"])
+            if not event["zero_probability"]:
+                totals["nll"] -= event["log_probability"]
+            if event["eos"]:
+                totals["sentences"] += 1
+                totals["position"] = 0
+            else:
+                totals["position"] += 1
+                totals["words"] += 1
+                totals["correct"] += int(event["correct"])
+                totals["oov"] += int(event["oov"])
+    if set(expected) != set(aggregates):
+        raise ValueError("Scoring events do not cover the complete metric matrix")
+    for condition, row in expected.items():
+        totals = aggregates[condition]
+        if totals["position"]:
+            raise ValueError(f"Scoring stream is missing its final EOS: {condition}")
+        for metric, field in (("prediction_events", "events"), ("word_tokens", "words"),
+                              ("correct_predictions", "correct"), ("oov_tokens", "oov"),
+                              ("zero_probability_events", "zeros"), ("sentences", "sentences")):
+            if int(row[metric]) != totals[field]:
+                raise ValueError(f"Event reconstruction mismatch for {condition}: {metric}")
+        accuracy = totals["correct"] / totals["words"]
+        if not math.isclose(float(row["accuracy"]), accuracy, rel_tol=1e-6, abs_tol=1e-9):
+            raise ValueError(f"Accuracy reconstruction mismatch: {condition}")
+        if totals["zeros"]:
+            if row["status"] != "infinite_zero_probability":
+                raise ValueError(f"Zero-probability status mismatch: {condition}")
+        elif row["status"] == "finite":
+            mean_nll = totals["nll"] / totals["events"]
+            if not math.isclose(math.log(float(row["perplexity"])), mean_nll, rel_tol=1e-6, abs_tol=1e-6):
+                raise ValueError(f"Perplexity reconstruction mismatch: {condition}")
+    return {"passed": True, "conditions": len(expected),
+            "events": sum(value["events"] for value in aggregates.values()),
+            "accuracy_denominator": "word_tokens", "perplexity_denominator": "word_tokens_plus_eos",
+            "sentence_index_origin": 0, "position_origin": 0}
+
+
 def evaluate_split(corpus: str, percent: float, label: str, info: dict, model,
                    vocab: Vocab, path: Path, source: str, cli: LanguageModelCLI,
-                   writers: tuple[csv.DictWriter, csv.DictWriter, csv.DictWriter]) -> dict:
+                   writers: tuple[csv.DictWriter, csv.DictWriter, csv.DictWriter],
+                   event_handle=None) -> dict:
     all_writer, correct_writer, incorrect_writer = writers
     started = time.perf_counter()
     progress_started = time.monotonic()
@@ -229,6 +325,10 @@ def evaluate_split(corpus: str, percent: float, label: str, info: dict, model,
     def sink(event: dict) -> None:
         state["events"] += 1
         report_progress(label, source, progress_started, state)
+        if event_handle is not None:
+            write_full_event(event_handle, event, vocab,
+                             {"corpus": corpus, "percent": percent, "model": label,
+                              "seed": info.get("seed", ""), "source": source})
         # Keep train split evaluation for aggregate metrics, but only emit
         # per-token prediction rows for held-out and rare examples.
         if source == "train":
@@ -1045,8 +1145,16 @@ def make_perplexity_summary(metrics: list[dict]) -> list[dict]:
     return rows
 
 
-def run(corpus: str, device_override: str | None = None) -> int:
-    config, config_path = load_corpus_config(corpus)
+def run(corpus: str, device_override: str | None = None,
+        config_override: str | Path | None = None) -> int:
+    config, config_path = load_corpus_config(corpus, config_override)
+    if config.get("execution", {}).get("colab_only"):
+        import os
+        if not os.environ.get("COLAB_RELEASE_TAG") or not torch.cuda.is_available():
+            raise RuntimeError("This experiment may only fit count tables in a Colab GPU runtime")
+    if config.get("data", {}).get("prepared_manifest"):
+        from run import verify_prepared_inputs
+        verify_prepared_inputs(config)
     data = config.get("data", {})
     data_root = project_path(data.get("output", "data/processed"))
     corpus_dir = data_root / corpus
@@ -1065,10 +1173,11 @@ def run(corpus: str, device_override: str | None = None) -> int:
         "correct": report_dir / "predictions_correct.csv",
         "incorrect": report_dir / "predictions_incorrect.csv",
         "chart": report_dir / "charts.png",
+        "events": report_dir / "scoring_events.jsonl.gz",
     }
-    print(f"Corpus: {corpus} | config: {config_path.relative_to(PROJECT_ROOT)}")
-    print(f"Result runs: {run_base.relative_to(PROJECT_ROOT)}")
-    print(f"Writing comparison files to {report_dir.relative_to(PROJECT_ROOT)}")
+    print(f"Corpus: {corpus} | config: {display_path(config_path)}")
+    print(f"Result runs: {display_path(run_base)}")
+    print(f"Writing comparison files to {display_path(report_dir)}")
 
     metrics: list[dict] = []
     rare_paths = {
@@ -1083,7 +1192,8 @@ def run(corpus: str, device_override: str | None = None) -> int:
     with output_files["metrics"].open("w", encoding="utf-8", newline="") as metric_handle, \
          output_files["predictions"].open("w", encoding="utf-8", newline="") as prediction_handle, \
          output_files["correct"].open("w", encoding="utf-8", newline="") as correct_handle, \
-         output_files["incorrect"].open("w", encoding="utf-8", newline="") as incorrect_handle:
+         output_files["incorrect"].open("w", encoding="utf-8", newline="") as incorrect_handle, \
+         gzip.open(output_files["events"], "wt", encoding="utf-8") as event_handle:
         metric_writer = csv.DictWriter(metric_handle, fieldnames=METRIC_FIELDS)
         metric_writer.writeheader()
         writers = (
@@ -1095,7 +1205,7 @@ def run(corpus: str, device_override: str | None = None) -> int:
             writer.writeheader()
 
         for percent, percent_dir in percent_folders:
-            print(f"\n== {percent:g}% training data: {percent_dir.relative_to(PROJECT_ROOT)} ==", flush=True)
+            print(f"\n== {percent:g}% training data: {display_path(percent_dir)} ==", flush=True)
             checkpoints = checkpoint_paths(percent_dir)
             if not checkpoints:
                 raise FileNotFoundError(f"No saved neural checkpoints found under {percent_dir}")
@@ -1119,6 +1229,12 @@ def run(corpus: str, device_override: str | None = None) -> int:
                 train_path, vocab, first["lowercase"], first["tokenizer"],
                 first.get("train_file_percent", 100),
             )
+            from lm.preparation import file_sha256
+            with gzip.open(percent_dir / "count_models.pkl.gz", "wb") as count_handle:
+                pickle.dump({"schema_version": 1, "variants": ngram_models,
+                             "vocab": vocab.itos, "train_sha256": file_sha256(train_path),
+                             "tokenizer": first["tokenizer"], "lowercase": first["lowercase"]},
+                            count_handle, protocol=pickle.HIGHEST_PROTOCOL)
             ngram_entries = [
                 (label, {
                     "family": item["family"],
@@ -1146,7 +1262,7 @@ def run(corpus: str, device_override: str | None = None) -> int:
                 model._backoff_prediction_cache.clear()
                 for source, path in (("train", train_path), ("valid", valid_path), ("test", test_path)):
                     row = evaluate_split(corpus, percent, label, info, model, vocab,
-                                         path, source, cli, writers)
+                                         path, source, cli, writers, event_handle)
                     metrics.append(row)
                     metric_writer.writerow(row)
                     metric_handle.flush()
@@ -1171,6 +1287,10 @@ def run(corpus: str, device_override: str | None = None) -> int:
                 label = model_label(checkpoint, loaded["name"])
                 seed_match = re.search(r"_seed(-?\d+)$", checkpoint.stem)
                 info = dict(loaded)
+                result_path = checkpoint.with_name(checkpoint.stem + "_result.json")
+                fit_result = {}
+                if result_path.is_file():
+                    fit_result = json.loads(result_path.read_text())["result"]
                 info.update({
                     "family": "neural",
                     "order": (
@@ -1178,7 +1298,7 @@ def run(corpus: str, device_override: str | None = None) -> int:
                         3 if label.startswith("ffnn_ctx2") else ""
                     ),
                     "seed": seed_match.group(1) if seed_match else "",
-                    "train_seconds": "",
+                    "train_seconds": fit_result.get("train_seconds", ""),
                 })
                 if tuple(info["vocab"]) != tuple(vocab.itos):
                     raise ValueError(f"{checkpoint} uses a different vocabulary from its percentage run")
@@ -1189,7 +1309,7 @@ def run(corpus: str, device_override: str | None = None) -> int:
                 model = info["model"]
                 for source, path in (("train", train_path), ("valid", valid_path), ("test", test_path)):
                     row = evaluate_split(corpus, percent, label, info, model, vocab,
-                                         path, source, cli, writers)
+                                         path, source, cli, writers, event_handle)
                     metrics.append(row)
                     metric_writer.writerow(row)
                     metric_handle.flush()
@@ -1221,11 +1341,19 @@ def run(corpus: str, device_override: str | None = None) -> int:
             writer.writerows(summary_rows)
     plot_metrics(metrics, output_files["chart"], corpus)
     percentage_plots = plot_percentage_metrics(metrics, report_dir, corpus)
+    from lm.preparation import atomic_json, file_sha256
+    verification = verify_scoring_events(output_files["metrics"], output_files["events"])
+    atomic_json(report_dir / "event_verification.json", verification)
+    artifact_hashes = {path.relative_to(run_base).as_posix(): file_sha256(path)
+                       for path in sorted(run_base.rglob("*")) if path.is_file()
+                       and path.name != "artifact_manifest.json"}
+    atomic_json(report_dir / "artifact_manifest.json", {"schema_version": 1,
+                "config_sha256": file_sha256(config_path), "files": artifact_hashes})
     for name, path in output_files.items():
         if path.exists():
-            print(f"Wrote {name}: {path.relative_to(PROJECT_ROOT)}")
+            print(f"Wrote {name}: {display_path(path)}")
     for path in percentage_plots:
-        print(f"Wrote percentage plot: {path.relative_to(PROJECT_ROOT)}")
+        print(f"Wrote percentage plot: {display_path(path)}")
     return 0
 
 
@@ -1233,6 +1361,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("corpus", help="corpus key from src/configs and data.yaml")
     parser.add_argument("--device", help="override configured device (auto, cpu, cuda, mps)")
+    parser.add_argument("--config", type=Path, help="explicit frozen corpus configuration")
     parser.add_argument(
         "--check", action="store_true",
         help="read existing metrics.csv and report complete versus pending evaluations without inference or writes",
@@ -1241,9 +1370,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         if args.device:
             parser.error("--device does not apply with --check")
+        if args.config is not None:
+            parser.error("--config does not apply with --check")
         check_comparison(args.corpus)
         return 0
-    return run(args.corpus, args.device)
+    return run(args.corpus, args.device, args.config)
 
 
 if __name__ == "__main__":

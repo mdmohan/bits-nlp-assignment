@@ -28,10 +28,15 @@ from .tokenization import canonical_tokenizer_name, get_tokenizer
 class LanguageModelController:
     def __init__(self, corpus: Corpus, min_freq: int = 2, max_vocab: int | None = None,
                  batch_size: int = 32, device: str = "auto", output_dir: str | None = None,
-                 tokenizer_name: str = "space"):
+                 tokenizer_name: str = "space", target_support: str | None = None):
         self.corpus = corpus
         self.tokenizer_name = canonical_tokenizer_name(tokenizer_name)
         self.vocab = Vocab(corpus.train, min_freq=min_freq, max_size=max_vocab)
+        if target_support not in {None, "vocab"}:
+            raise ValueError("target_support must be 'vocab' or omitted")
+        self.allowed_target_ids = None
+        if target_support == "vocab":
+            self.allowed_target_ids = self.vocab.allowed_target_ids
         self.device = get_device(device)
         self.output_dir = None
         if output_dir:
@@ -116,7 +121,8 @@ class LanguageModelController:
         model.load_state_dict(
             torch.load(final_model, map_location=self.device, weights_only=True)
         )
-        trainer = Trainer(model, TrainConfig(), self.vocab.pad_id, self.device)
+        trainer = Trainer(model, TrainConfig(), self.vocab.pad_id, self.device,
+                  allowed_target_ids=self.allowed_target_ids)
         test_started = time.perf_counter()
         test = trainer.evaluate(self.test_loader, "resume test evaluation")
         test_seconds = time.perf_counter() - test_started
@@ -156,7 +162,8 @@ class LanguageModelController:
         print(f"\n=== {model_name} | seed {seed} | device {self.device} ===")
         set_seed(seed)
         model = build_model(model_name, len(self.vocab), self.vocab.pad_id, **model_params)
-        trainer = Trainer(model, train_config, self.vocab.pad_id, self.device)
+        trainer = Trainer(model, train_config, self.vocab.pad_id, self.device,
+                  allowed_target_ids=self.allowed_target_ids)
 
         start = time.perf_counter()
         history = trainer.fit(
@@ -175,6 +182,7 @@ class LanguageModelController:
         valid = trainer.evaluate(self.valid_loader, "valid")
 
         result = {
+            **trainer.fit_summary,
             "model": model_name,
             "seed": seed,
             "parameters": count_parameters(model),
@@ -327,6 +335,9 @@ def run_from_config(
     if not processed_root.is_absolute():
         processed_root = project_root / processed_root
     corpus_dir = processed_root / data_config["corpus"]
+    if config.get("execution", {}).get("colab_only"):
+        if not os.environ.get("COLAB_RELEASE_TAG") or not torch.cuda.is_available():
+            raise RuntimeError("This experiment may only fit models in a Colab GPU runtime")
     corpus = load_corpus_files(
         corpus_dir / "train.txt",
         corpus_dir / "valid.txt",
@@ -344,7 +355,10 @@ def run_from_config(
         device=config.get("device", "auto"),
         output_dir=output_dir,
         tokenizer_name=tokenizer_name,
+        target_support=config.get("target_support"),
     )
+    if controller.allowed_target_ids is not None:
+        config["allowed_target_ids"] = list(controller.allowed_target_ids)
     controller.data_stats["train_percent"] = train_percent
     config["train_percent"] = train_percent
     training_snapshot = output_dir / "train.txt"
@@ -445,6 +459,7 @@ def run_from_config(
                 "corpus": data_config["corpus"],
                 "split_fingerprints": split_fingerprints,
                 "vocab_fingerprint": controller.vocab.fingerprint,
+                "allowed_target_ids": controller.allowed_target_ids,
                 "device": str(controller.device),
                 "torch_version": torch.__version__,
                 "code_fingerprints": {
@@ -501,6 +516,8 @@ def run_from_config(
                 ):
                     stale_best.unlink(missing_ok=True)
             elif resume and final_model.is_file() and not checkpoint_path.is_file():
+                if data_config.get("prepared_manifest"):
+                    raise ValueError(f"Cannot verify completed weights without signed result: {result_path}")
                 result = controller._recover_completed_result(
                     model_name, model.get("params", {}), seed, final_model, history_path,
                 )

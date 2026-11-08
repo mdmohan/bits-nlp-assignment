@@ -1,0 +1,34 @@
+@page {
+  size: A4;
+  margin: 12mm;
+}
+
+body {
+  max-width: 7.2in;
+  margin: 24px auto;
+  color: #171717;
+  background: #fff;
+  font: 11pt/1.35 Georgia, "Times New Roman", serif;
+}
+
+h1 { font-size: 20pt; }
+h2 { font-size: 14pt; }
+h3 { font-size: 12pt; }
+h1, h2, h3 { break-after: avoid; }
+p { orphans: 3; widows: 3; }
+a { color: inherit; text-decoration: none; }
+code { font-size: 9pt; overflow-wrap: anywhere; }
+figure { margin: 16px 0; break-inside: avoid; }
+img { max-width: 100%; height: auto; }
+figcaption { display: none; }
+table { width: 100%; border-collapse: collapse; font-size: 9pt; }
+thead { display: table-header-group; }
+th, td { padding: 5px 4px; border-bottom: 1px solid #aaa; }
+th { border-top: 1px solid #555; }
+tr { break-inside: avoid; }
+math[display="block"] { margin: 12px 0; break-inside: avoid; }
+
+@media print {
+  body { margin: 0; max-width: none; }
+  h2[id^="appendix-"] { break-before: page; }
+}

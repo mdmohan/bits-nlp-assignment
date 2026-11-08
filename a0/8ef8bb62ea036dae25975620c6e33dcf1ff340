@@ -1,0 +1,93 @@
+.gitignore
+  s_4648cc75a87dfc::t_eee0c6c35728e9 31-36
+src/run.py
+  s_4648cc75a87dfc::t_d9f09d6c97c145 12,150-183,398-412,429-430
+README.md
+  s_4648cc75a87dfc::t_d9f09d6c97c145 3-77,83-87,89,97-108,115
+src/lm/controller.py
+  s_4648cc75a87dfc::t_d9f09d6c97c145 31,35-39,124-125,165-166,185,338-340,358,360-361,462,519-520
+colab/inaugural_convergence.ipynb
+  s_1d54cb4f280b78::t_6e75d755906d49 1-244
+colab/nltk_data_efficiency.ipynb
+  s_1d54cb4f280b78::t_04bb74c2f50fc5 29-30,40,42,73,96,122-126,130-131,147,174
+docs/research_directions/data_efficiency/README.md
+  s_1d54cb4f280b78::t_4ee67020fb944b 11
+docs/research_directions/data_efficiency/recommendations.md
+  s_1d54cb4f280b78::t_70a9157df33754 1-127
+src/analyze_inaugural.py
+  s_1d54cb4f280b78::t_ce535471fca7c1 1-567
+src/analyze_rare_targets.py
+  s_1d54cb4f280b78::t_640b58badf4a22 1-455
+src/configs/README.md
+  s_1d54cb4f280b78::t_a4039b98ec6612 40-58,70-73
+src/configs/data_efficiency_inaugural_convergence.yaml
+  s_1d54cb4f280b78::t_ebe8716a358be4 1-82
+src/lm/colab.py
+  s_1d54cb4f280b78::t_6343ca7df88b93 64-115,121,123-126
+src/lm/experiments.py
+  s_1d54cb4f280b78::t_c4493184dcacda 29,36-40,112-113,200-202,212,222-228,258-263,267-271,274-277,325,347,358-359,393,401-403
+src/lm/neural/trainer.py
+  s_1d54cb4f280b78::t_fe172f7b1bd579 19-26,82,136,139-141,148-149,156-157,161-165,167,188-189,192,195,208-218,241-243,248-254,280,283-294,297-301,305,309-318,320,324-327,339-340,345,348-349,366-392
+src/lm/preparation.py
+  s_1d54cb4f280b78::t_68ebbac73d3c4c 13,193-352,441,448-449,453-456,461,463,486-500,513-519,521,524-525
+src/lm/reporting.py
+  s_1d54cb4f280b78::t_0d511c827d611b 47-51,74-80,154-161,181-182,216-219,221-232
+src/tests/README.md
+  s_1d54cb4f280b78::t_6a36c8b62f7379 27-31
+src/tests/test_colab.py
+  s_1d54cb4f280b78::t_31bfe26fe9c8fe 1-52
+src/tests/test_experiments.py
+  s_1d54cb4f280b78::t_bb79317b6bf753 5,26-27,73-98
+src/tests/test_rare_targets.py
+  s_1d54cb4f280b78::t_95511342ed3f9a 1-131
+src/tests/test_reporting.py
+  s_1d54cb4f280b78::t_28e74fed21aaa1 1-47
+src/tests/test_trainer.py
+  s_1d54cb4f280b78::t_5bb8779f4a4669 1-196
+docs/paper/paper.css
+  s_4648cc75a87dfc::t_cbc294643eb87c 1-34
+docs/paper/paper_working_draft.md
+  s_4648cc75a87dfc::t_e208ae3715bdc5 1-487
+docs/submission/contributions_and_ai.md
+  s_4648cc75a87dfc::t_4fdc599114351b 1-61
+docs/submission/data_access_instructions.md
+  s_4648cc75a87dfc::t_613e4f3c51ff6a 1-113
+docs/submission/dataset_card.md
+  s_4648cc75a87dfc::t_1b6a2386c72cb2 1-143
+docs/submission/proposal.md
+  s_4648cc75a87dfc::t_da49794951065a 1-23
+docs/submission/reproducibility.md
+  s_4648cc75a87dfc::t_f509afef9f130b 1-140
+src/export_neural_models.py
+  s_1d54cb4f280b78::t_c12548c3cd29a1 1-133
+src/import_kubeflow_results.py
+  s_1d54cb4f280b78::t_9c168be00fcf64 1-213
+src/model_comparison.py
+  s_4648cc75a87dfc::t_b66270ccfefe75 18-19,21,76-88,236-315,318-319,328-331,1148-1157,1176,1178-1180,1195-1196,1208,1232-1237,1265,1290-1293,1301,1312,1344-1351,1354,1356,1364,1373-1374,1377
+src/tests/test_analysis.py
+  s_4648cc75a87dfc::t_8763e274da6595 1-329
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a08ef8bb62ea036dae25975620c6e33dcf1ff340",
+  "prompts": {},
+  "sessions": {
+    "s_1d54cb4f280b78": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "a842ea4e-ce50-4c81-a2a8-54a243b0f1bf",
+        "model": "copilot/gpt-6.1-sol"
+      },
+      "human_author": "AxleAddict <akshayjoish28@gmail.com>"
+    },
+    "s_4648cc75a87dfc": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "b58a2ace-ff77-4ba8-8156-2f1e072fa59d",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "AxleAddict <akshayjoish28@gmail.com>"
+    }
+  }
+}

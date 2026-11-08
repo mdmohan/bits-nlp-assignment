@@ -14,10 +14,11 @@ created.
 
 ## 2. Evidence and documentation consistency
 
-- [ ] Reconcile the final WebText seed count across the paper, `README.md`,
-  proposal, dataset card and reproducibility note. The paper and current results
-  describe three WebText seeds and 420 test conditions, while several supporting
-  documents still describe one WebText seed and 390 conditions.
+- [x] Reconcile the final WebText split and seed count across the paper,
+  `README.md`, proposal, dataset card, data-access instructions and
+  reproducibility note: WebText uses a 1/2/2 source-file split with seed 13 and
+  neural seeds 13/42/2026; the complete matrix has 240 neural fits and 420 test
+  conditions.
 - [ ] Review the ROCStories and WebText licence entries. If no clearer upstream
   terms can be verified, replace each `TBD` with an explicit statement that the
   terms remain unclarified and that raw text will not be redistributed.

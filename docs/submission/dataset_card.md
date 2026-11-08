@@ -4,10 +4,9 @@
 
 Group 1, Problem Statement 1; documentation prepared 7 November 2026. This is an
 English word-level next-token study, not a released general-purpose dataset,
-story-reasoning benchmark or cross-domain transfer experiment. Brown is the PS1
-anchor; the other five corpora are supplementary. Sources were obtained on
-2 November 2026 according to recorded `accessed_at` fields. Exact UTC times,
-public URLs and byte pins are in [data access](data_access_instructions.md).
+story-reasoning benchmark or cross-domain transfer experiment. The experiment
+compares six corpora under one common language-modeling protocol. Public source
+URLs and byte pins are in [data access](data_access_instructions.md).
 
 The authoritative preparation snapshot is
 `results/comparison_refresh_20261102_v1/processed/<corpus>/`, not the older
@@ -28,7 +27,7 @@ rounding and sentence removal.
 | Inaugural: 60 US presidential addresses | 42/12/6 | 3,877/1,111/406 | 99,657/30,361/10,934 | 70/20/10; 42 |
 | Reuters: 8,212 retained parsed news documents | 5,748/1,643/821 | 41,022/11,525/5,907 | 889,683/250,690/126,774 | 70/20/10; 42 |
 | ROCStories: 98,161 narrative source rows | 68,710/19,635/9,816 | 339,616/97,538/48,884 | 2,980,263/853,632/427,651 | 70/20/10; 42 |
-| WebText: five heterogeneous retained files | 3/1/1 | 6,398/17,958/316 | 53,269/156,464/3,550 | 70/20/10; 3999 |
+| WebText: five heterogeneous retained files | 1/2/2 | 17,958/2,228/4,560 | 156,464/14,763/42,141 | 20/40/40; 13 |
 
 Count/settings authorities:
 [Brown](../../results/comparison_refresh_20261102_v1/processed/brown/prepared_manifest.json),
@@ -36,7 +35,7 @@ Count/settings authorities:
 [Inaugural](../../results/comparison_refresh_20261102_v1/processed/inaugural/prepared_manifest.json),
 [Reuters](../../results/comparison_refresh_20261102_v1/processed/reuters/prepared_manifest.json),
 [ROCStories](../../results/comparison_refresh_20261102_v1/processed/roc-stories/prepared_manifest.json),
-[WebText](../../results/comparison_refresh_20261102_v1/processed/webtext/prepared_manifest.json).
+[WebText](../../results/webtext-nn/train_100pct/data_stats.json).
 These full-workspace evidence links do not promise that all private provenance
 is shipped in the lightweight group archive.
 
@@ -46,10 +45,10 @@ James Bible, validates on Chesterton's *The Ball and the Cross* and Whitman's
 text exceeds training text. Inaugural tests on Washington 1793, Monroe 1817,
 Taylor 1849, Buchanan 1857, Truman 1949 and Carter 1977.
 
-WebText excludes `firefox.txt`: training uses `grail.txt`, `pirates.txt`,
-`wine.txt`; validation uses `overheard.txt`; test uses `singles.txt`. One test
-source and an unusually large validation source make it a source-shift stress
-case, not representative web-language evidence. Reuters uses the prepared
+WebText excludes `firefox.txt`; its five retained source files are assigned as
+one training file, two validation files and two test files. Large differences
+between source-file sizes make the realized sentence and token fractions differ
+from the nominal file-level ratio. Reuters uses the prepared
 parsed collection, not every item in the original NLTK archive.
 
 ROCStories uses the public combined-release mirror, not old flattened exports.
@@ -94,11 +93,16 @@ composition and capacity confounds simple cross-budget PPL comparisons. Fixed
 target cohorts fix membership only. PPL across these tokenizations/corpora is
 not a universal common-scale benchmark.
 
+Brown, Gutenberg, Inaugural, Reuters and WebText use neural seeds 13, 42 and
+2026. ROCStories uses seed 13 only because of its greater computational cost.
+
 ## Integrity and Retained Overlap
 
-Test-first exact-sentence quarantine uses lowercase/collapsed-whitespace
-identity with precedence test, validation, training. All six saved audits
-report zero cross-split exact sentence overlap afterward. This does not prove
+Saved test-first exact-sentence quarantine audits use
+lowercase/collapsed-whitespace identity with precedence test, validation,
+training. Brown, Gutenberg, Inaugural, Reuters and ROCStories report zero
+cross-split exact sentence overlap afterward. A direct check of the final
+WebText split finds the exact overlaps reported below. These checks do not prove
 zero semantic overlap, zero within-split duplication or independent documents.
 
 | Corpus | Quarantined sentence occurrences | Retained near-audit disposition |
@@ -108,7 +112,7 @@ zero semantic overlap, zero within-split duplication or independent documents.
 | Inaugural | 17 | No candidates above screening threshold |
 | Reuters | 1,518 | Six cross-split pairs: three train-test involving two distinct test sentences, two train-valid, one valid-test |
 | ROCStories | 3,192 | Near scan not run; absence cannot be certified |
-| WebText | 74 | No candidates above screening threshold |
+| WebText | Not available | 37 distinct exact strings / 175 cross-split occurrences; near-duplicate scan not performed |
 
 Screening requires at least 10 tokens, five distinct token five-shingles and
 Jaccard similarity >=0.9. Shorter, lower-similarity and semantic matches fall
@@ -136,7 +140,7 @@ Historical/news/web material may contain personal names, biased, offensive or
 sensitive text. No universal no-personal-data, consent, representativeness or
 privacy-audit claim is made. No pretrained language model is used; models are
 trained from scratch. Fixed source partitions, unequal compute, retained
-overlaps and single neural seeds for ROCStories/WebText limit inference.
+overlaps and the single ROCStories neural seed limit inference.
 
 The 10 MB group ZIP excludes raw datasets, checkpoints and large scoring-event
 archives. Review public rights before acquisition and retain matching private

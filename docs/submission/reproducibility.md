@@ -24,20 +24,20 @@ later accuracy audits reconstruct native windows and exact prefix membership.
 | LSTM | Embeddings 128, hidden 256, one recurrent layer; dropout 0.3 on embeddings/outputs; available sentence prefix/reset per sentence, not four-word |
 | Optimization | Adam 0.001, gradient clip 1, batches of up to 32 sentences |
 | Selection | Maximum 20 epochs, patience 3, strict token-mean validation NLL, restore best weights |
-| Neural seeds | Brown/Gutenberg/Inaugural/Reuters: 13/42/2026; ROCStories/WebText: 13 only |
-| Document allocation | Brown/Gutenberg 80/10/10; others 70/20/10; split seed 42 except WebText 3999 |
+| Neural seeds | Brown/Gutenberg/Inaugural/Reuters/WebText: 13/42/2026; ROCStories: 13 only |
+| Document allocation | Brown/Gutenberg 80/10/10; Inaugural/Reuters/ROCStories 70/20/10; WebText 20/40/40 (one/two/two source files); split seed 42 except WebText 13 |
 
 The [frozen Brown config](../../results/comparison_refresh_20261102_v1/configs/brown.yaml)
 and [full manifest](../../results/comparison_refresh_20261102_v1/mega-run.yaml)
-are retained-workspace authorities. The matrix has 210 neural fits and 180
-statistical conditions, 390 test conditions from 30 shared count passes, not
-390 independent replicates. Only 20 serialized count archives remain; all ten
+are retained-workspace authorities. The matrix has 240 neural fits and 180
+statistical conditions, 420 test conditions from 30 shared count passes, not
+420 independent replicates. Only 20 serialized count archives remain; all ten
 Gutenberg/Inaugural archives are absent.
 
-Three-seed tables use sample SD; ROCStories/WebText report single runs without
-invented zero SD. Reduced seed coverage reflects computationally constrained
+Three-seed tables use sample SD; ROCStories reports a single run without an
+invented zero SD. Its reduced seed coverage reflects computationally constrained
 retained execution, not three-seed replication or a measured minimum compute
-requirement. No new seeds/fitting/inference were run to complete these documents.
+requirement. No new fitting or inference was run to complete these documents.
 
 ## Runtime Evidence, Not a Frozen Lock
 
@@ -68,8 +68,9 @@ Final runs are under `results/comparison_sweep_20261102_v3/full/runs/`:
 The [Gutenberg/Inaugural receipt](../../results/comparison_sweep_20261102_v3/comparison_attempts/kubeflow_recovery_20261103/local_verification.json)
 records complete verification of 90 neural conditions on 3 November 2026.
 The [remaining-corpora receipt](../../results/comparison_sweep_20261102_v3/comparison_attempts/kubeflow_remaining_20261105/local_verification.json)
-records complete Reuters/ROCStories/WebText import on 6 November 2026, 75 neural
-checkpoints and preservation of older runs. Import timestamps do not establish
+records the Reuters/ROCStories/WebText import on 6 November 2026. The completed
+final result folders contain 105 neural checkpoints across those corpora: 45 for
+Reuters, 15 for ROCStories and 45 for WebText. Import timestamps do not establish
 training completion times. Receipt hash checks happened then; no large-artifact
 rehashing is performed in this documentation pass. Historical launch/blocker
 text in [Colab notes](../../colab/README.md) is superseded for final inventory

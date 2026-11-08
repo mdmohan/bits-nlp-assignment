@@ -155,7 +155,7 @@ python src/data-pipeline/data_download.py my-corpus \
   --conf src/data-pipeline/data.yaml --out data/raw
 ```
 
-Use the registry's `status` field to distinguish candidate datasets from the corpus selected for final experiments. After choosing, record the exact release, access date, license terms, file counts/size, preprocessing, split, and known limitations. Re-check redistribution terms before committing or submitting raw or processed data.
+Use the registry's `status` field to distinguish candidate datasets from the corpus selected for final experiments. After choosing, record the exact release or revision, package checksum, license terms, file counts/size, preprocessing, split, and known limitations. Re-check redistribution terms before committing or submitting raw or processed data.
 
 ## Full pipeline
 

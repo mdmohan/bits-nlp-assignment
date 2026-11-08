@@ -1,12 +1,36 @@
+# Direct project dependencies for Python 3.11.
+# Transitive dependencies are intentionally left for pip to resolve.
+
+# Neural language models.
 torch>=2.5
 torchinfo==1.8.0
-nltk>=3.9
-pyyaml>=6.0
-pandas>=2.2
+
+# Numerical analysis, experiment tables, and plots.
 numpy>=1.26
-datasets>=3.0  # only needed for the huggingface loader
+pandas>=2.2
 matplotlib>=3.9
-datasketch>=1.6
-langdetect>=1.0.9
+
+# Corpus processing, tokenization, configuration, and deduplication.
+nltk>=3.9
+PyYAML>=6.0
 beautifulsoup4>=4.12
+datasketch>=1.6
+langdetect==1.0.9
+charset-normalizer>=3.0
+typing-extensions>=4.4; python_version < "3.12"
+
+# Pinned ROCStories Parquet ingestion and version checks used by the
+# preparation and Kubeflow utilities.
 pyarrow>=14.0
+packaging>=23.2
+
+# Local execution of the shipped notebooks. Google Colab supplies
+# ``google.colab`` itself; it is intentionally not installed here.
+ipython>=8.18
+ipykernel>=6.29
+
+# NLTK corpora and ``punkt_tab`` are data resources, not pip packages. Project
+# entry points download them when required. Cached ``shelve`` databases also
+# require the Python installation to include its OS-provided dbm/gdbm backend.
+# The frozen Kubeflow sweep/recovery scripts additionally enforce the exact
+# PyTorch 2.11.0 public release in their specialized CUDA runtime.

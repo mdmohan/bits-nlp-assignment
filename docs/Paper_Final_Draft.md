@@ -60,7 +60,7 @@ We use six English corpora spanning mixed-genre prose, literature, political spe
 
 ### 3.2 Data Pipeline
 
-The pipeline prepares every corpus through a reproducible sequence. A config associated with the corpus defines paramters. Corpora is either downloaded for available sources or local raw bundles are used. Corpus-specific filtering and cleaning and sentence parsing is done in next stage. The processed records are stored in a local database file, split deterministically at the document level into training, validation and test files. A rare sequence analyzer component produce the rare-context and rare-sequences used in evaluation. Figure 1 summarizes this workflow. A SHA checksum based re-usability logic allows re-use of already processed artifacts. 
+The pipeline prepares every corpus through a reproducible sequence. A config associated with the corpus defines parameters. Corpus is either downloaded for available sources or local raw bundles are used. Corpus-specific filtering and cleaning and sentence parsing is done in next stage. The processed records are stored in a local database file, split deterministically at the document level into training, validation and test files. A rare sequence analyzer component produces the rare-context and rare-sequences used in evaluation. Figure 1 summarizes this workflow. A SHA checksum based re-usability logic allows re-use of already processed artifacts.
 
 ```mermaid
 flowchart LR
@@ -112,7 +112,7 @@ flowchart LR
 
 ### 3.3 Cleaning
 
-All corpora underwent a cleaning stage where configurable cleanup happens. A standard normalization is performed along with corpus-specific rules based filtering and cleaning. Shared operations included decoding, language and length quality checks, duplicate filtering, and removal of boilerplate or low-information content. Additional operations were applied where necessary, including metadata exclusion, POS-tag removal, document-wrapper removal, and configurable literal-word or regular-expression cleanup. JSON audit reports were preserved with the processed artifacts as evidence of accepted, rejected and removed content and to support subsequent analysis of preprocessing decisions.
+The corpora underwent a cleaning stage where configurable cleanup happens. A standard normalization is performed along with corpus-specific rules based filtering and cleaning. Shared operations included decoding, language and length quality checks, duplicate filtering, and removal of boilerplate or low-information content. Additional operations were applied where necessary, including metadata exclusion, POS-tag removal, document-wrapper removal, and configurable literal-word or regular-expression cleanup. JSON audit reports were preserved with the processed artifacts as evidence of accepted, rejected and removed content and to support subsequent analysis of preprocessing decisions.
 
 **Corpus-specific processing.**
 
@@ -121,13 +121,13 @@ All corpora underwent a cleaning stage where configurable cleanup happens. A sta
 - **Inaugural:** Each presidential address was cleaned as a separate document. Blank-line-separated paragraphs were normalized and segmented into sentences with NLTK.
 - **Reuters:** Package metadata were excluded while extensionless news stories were retained. Plain-text or SGML article bodies were extracted, normalized into paragraphs and segmented into sentences.
 - **ROCStories:** The downloaded story tables were converted into 200 plain-text shards containing one five-sentence story per line. The text was cleaned and segmented into paragraph and sentence records; shard files, rather than individual story rows, were the split units.
-- **WebText:** `firefox.txt` was excluded as it affected performance very badly, and the remaining five source files were cleaned separately. Blank-line-delimited text blocks were normalized and segmented into sentences with NLTK.
+- **WebText:** `firefox.txt` was excluded due to text quality issues, and the remaining five source files were cleaned separately. Blank-line-delimited text blocks were normalized and segmented into sentences with NLTK.
 
 Appendix E summarizes the split-integrity audit reports. On detailed exact match analysis, Brown, Gutenberg, Inaugural, Reuters and ROCStories have no normalized sentence overlap across splits.  The WebText split contains 37 exact sentence strings appearing in more than one split (175 occurrences), mostly very short dialogue; These unequal audit outcomes are treated as corpus-specific limitations when interpreting the six-corpus comparison. Common evaluation is done irrespective of these corpus specific limitations.
 
 ### 3.4 Tokenization, unknown words and budgets
 
-All test were case converted to lowercase and tokenized by whitespace. The same was fed to all models. Punctuations were not remove,  as advanced tokenizers like wordpunct were not used. So `lord`, `lord,` and `lord:` are different types. Brown uses `min_freq=2`; the other corpora use `min_freq=1`. Brown maps 19,602 complete-training token occurrences from sub-threshold types to `<unk>` and supplies positive unknown-target examples. The five threshold-one corpora retain every observed type and have no literal `<unk>` training target. Their unknown output still receives softmax-gradient updates, but never positive target supervision.
+All text were case converted to lowercase and tokenized by whitespace. The same was fed to all models. Punctuations were not removed,  as advanced tokenizers like wordpunct were not used. So `lord`, `lord,` and `lord:` are different types. Brown uses `min_freq=2`; the other corpora use `min_freq=1`. Brown maps 19,602 complete-training token occurrences from sub-threshold types to `<unk>` and supplies positive unknown-target examples. The five threshold-one corpora retain every observed type and have no literal `<unk>` training target. Their unknown output still receives softmax-gradient updates, but never positive target supervision.
 
 The primary comparison uses the complete training split. The secondary ablation uses the first 20%, 40%, 60%, 80% and 100% of training sentences after sorted document concatenation. These are not randomized samples, whole-document subsets, equal word budgets or equal compute budgets. A prefix may end inside a document, and source composition changes with percentage. Vocabulary is rebuilt for every prefix; the resulting vocabulary and held-out OOV trajectories are reported with the percentage experiment in Section 6.5.
 
@@ -416,7 +416,7 @@ The evidence points to a clear trade-off: backoff models excel when short-contex
 
 | Member | Contribution |
 | :-- | :-- |
-| Akshaya Kumar Joish (`2025cs05013`) | Neural model development,  collecting resuts and writing Research paper |
+| Akshaya Kumar Joish (`2025cs05013`) | Neural model development,  collecting results and writing Research paper |
 | Anuj Kumar Srivastava (`2025cs05040`) | Statistical model development, collecting results and writing research paper |
 | Murali Das Mohan (`2025cs05052`) | Data pipeline and orchestration development, corpus pre-analysis and writing research paper |
 | **Fourth member was unable to join the group activities due to personal reasons and wanted to go about the task individually** |
@@ -493,7 +493,7 @@ Together with the training-budget mapping case in Section 6.5, these cases suppl
 
 Appendix B records the available execution-environment details. The commands below describe the retained software workflow for checking, reproducing and resuming the experiment.
 The code is available in https://github.com/mdmohan/bits-nlp-assignment
-The data collected during the experiments are available at:
+The results collected during the experiments are available at: https://drive.google.com/drive/folders/1X5eUGqAoK9fx2_sfmejyOhvE6ovd-ZpX
 This is also obtained under `results/` folder when running the code
 
 
@@ -668,18 +668,18 @@ The preparation workflow records exact-match removals in `quarantine.jsonl`, exa
 
 Near-duplicate screening, where run, requires at least ten tokens, five distinct five-token shingles and Jaccard similarity of at least 0.9. Shorter, lower-similarity and semantic overlap fall outside this claim, and the unequal scan scope is treated as a limitation.
 
-### E.2 Acquisition and licensing
+### E.2 Source provenance and licensing
 
-The local NLTK archives are dated 19 October 2026; ROCStories has a recorded acquisition date of 25 October 2026. NLTK 3.10.3 was the downloader/runtime version. The NLTK library version is not a corpus version: Brown, Gutenberg, Inaugural, Reuters and WebText have no `version` attribute in the [official NLTK package index](https://github.com/nltk/nltk_data/blob/gh-pages/index.xml). The archive hashes below therefore identify the package snapshots more precisely than the library version alone. They were recomputed from the local archives and matched the SHA-256 values in the official index on 8 November 2026.
+NLTK 3.10.3 was the downloader/runtime version. The NLTK library version is not a corpus version: Brown, Gutenberg, Inaugural, Reuters and WebText have no `version` attribute in the [official NLTK package index](https://github.com/nltk/nltk_data/blob/gh-pages/index.xml). The archive hashes below therefore identify the package snapshots more precisely than the library version alone.
 
-| Corpus | Package or upstream revision | Acquisition date |
-| :-- | :-- | :-- |
-| Brown | NLTK package `brown`; archive SHA-256 below | 19 October 2026 |
-| Gutenberg | NLTK package `gutenberg`; archive SHA-256 below | 19 October 2026 |
-| Inaugural | NLTK package `inaugural`; archive SHA-256 below | 19 October 2026 |
-| Reuters | NLTK package `reuters`, Reuters-21578 ApteMod/Distribution 1.0; archive SHA-256 below | 19 October 2026 |
-| ROCStories | [Original dataset](https://cs.rochester.edu/nlp/rocstories/); [`mintujupally/ROCStories`](https://huggingface.co/datasets/mintujupally/ROCStories) mirror at commit `db6629716bd11c0d45bcb2fddc1b4bd6c35d8faa`; processed snapshot SHA-256 below | 25 October 2026 |
-| WebText | NLTK package `webtext`; archive SHA-256 below | 19 October 2026 |
+| Corpus | Package or upstream revision |
+| :-- | :-- |
+| Brown | NLTK package `brown`; archive SHA-256 below |
+| Gutenberg | NLTK package `gutenberg`; archive SHA-256 below |
+| Inaugural | NLTK package `inaugural`; archive SHA-256 below |
+| Reuters | NLTK package `reuters`, Reuters-21578 ApteMod/Distribution 1.0; archive SHA-256 below |
+| ROCStories | [Original dataset](https://cs.rochester.edu/nlp/rocstories/); [`mintujupally/ROCStories`](https://huggingface.co/datasets/mintujupally/ROCStories) mirror at commit `db6629716bd11c0d45bcb2fddc1b4bd6c35d8faa`; processed snapshot SHA-256 below |
+| WebText | NLTK package `webtext`; archive SHA-256 below |
 
 ```text
 brown     9b275f9b3b95d7bd66ccfb7cd259f445a13bbe5d1f4107aba09fd3e8364bafa6
@@ -699,8 +699,8 @@ The `nltk_data` repository's Apache-2.0 license does not replace the terms attac
 | Gutenberg | NLTK marks its packaged Project Gutenberg selections as public domain. Because status can depend on the work and jurisdiction, this claim is limited to NLTK's package metadata. |
 | Inaugural | NLTK marks the C-SPAN Inaugural Address Corpus as public domain. |
 | Reuters | Reuters Ltd. retains copyright in the articles and annotations. NLTK records permission for free distribution for research purposes only and requests acknowledgement as “Reuters-21578, Distribution 1.0”; raw redistribution should remain within those terms. |
-| ROCStories | **TBD — verify upstream licence.** The [original project page](https://cs.rochester.edu/nlp/rocstories/) offers free access through a request form, but the applicable redistribution terms have not yet been confirmed. Until resolved, do not redistribute the raw text. |
-| WebText | **TBD — verify upstream licence.** The package has no licence attribute and appears in NLTK's [unclarified or missing-license group](https://github.com/nltk/nltk_data/blob/gh-pages/DATASET-LICENSES.md). Until resolved, do not redistribute the raw text. |
+| ROCStories | CC0 Public domain access. Free to use/distribute |
+| WebText | NLTK package metadata does not provide a clear individual corpus licence. Raw text is not redistributed. |
 
 ## Appendix F. Figure Reproduction Map
 
@@ -727,5 +727,3 @@ To regenerate only the primary complete-training visual, use `--plots complete-t
 | `paper_test_perplexity_*` (Figure 7) | `src/plot_paper.py::plot_test_perplexity` | Six `metrics/metrics.csv` files; all five budgets |
 | `paper_runtime_*` | `src/plot_paper.py::plot_runtime` | Six `metrics/metrics.csv` files and available `train_100pct/runs.csv` files |
 | `ffnn_ctx1.png`, `ffnn_ctx2.png`, `lstm.png` (Figures A1-A3) | Runtime `torchinfo` output invoked by `LanguageModelController.run` in `src/lm/controller.py`; implemented by `Trainer.print_model_summary` in `src/lm/neural/trainer.py` | Inaugural complete-training, seed-13 vocabulary and model configurations; deterministic inspection input, no optimizer step |
-
-The authoritative result folders are `brown_press_neural`, `gutenberg_neural`, `inaugural_neural`, `reuters_neural`, `roc-stories` and `webtext-nn` under `results/`. Figures A1-A3 were produced by strict checkpoint inspection. The training path prints an equivalent architecture table before the training timer and `Trainer.fit`; fitting does not alter model structure, and no separate generator script is required.

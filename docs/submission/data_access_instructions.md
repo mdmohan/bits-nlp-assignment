@@ -6,7 +6,7 @@ The group ZIP maximum is 10 MB. Raw datasets, checkpoints and large scoring-even
 archives are not shipped. Code/docs/selected small results are distinct from the
 private complete workspace. Public availability is not redistribution permission;
 review the [dataset card](dataset_card.md) before acquisition. These are recorded
-source URLs and dates, not downloads or live access checks performed for this doc.
+source URLs and byte pins, not downloads or live access checks performed for this doc.
 
 ## NLTK Sources and Byte Pins
 
@@ -16,13 +16,13 @@ branch contents or the NLTK version alone do not. A different download is a
 new input, not exact replay. Seek a matching lawfully retained copy; never bypass
 hash checks or invent a release date.
 
-| Corpus | Actual public archive URL | Recorded `accessed_at` (UTC) |
-|---|---|---|
-| Brown | [brown.zip](https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/corpora/brown.zip) | 2026-11-02T11:33:40.884745+00:00 |
-| Gutenberg | [gutenberg.zip](https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/corpora/gutenberg.zip) | 2026-11-02T11:34:02.005502+00:00 |
-| Inaugural | [inaugural.zip](https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/corpora/inaugural.zip) | 2026-11-02T11:33:23.859212+00:00 |
-| Reuters | [reuters.zip](https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/corpora/reuters.zip) | 2026-11-02T11:34:47.823836+00:00 |
-| WebText | [webtext.zip](https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/corpora/webtext.zip) | 2026-11-02T11:34:55.154416+00:00 |
+| Corpus | Actual public archive URL |
+|---|---|
+| Brown | [brown.zip](https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/corpora/brown.zip) |
+| Gutenberg | [gutenberg.zip](https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/corpora/gutenberg.zip) |
+| Inaugural | [inaugural.zip](https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/corpora/inaugural.zip) |
+| Reuters | [reuters.zip](https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/corpora/reuters.zip) |
+| WebText | [webtext.zip](https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/corpora/webtext.zip) |
 
 | Corpus | Recorded archive SHA256 |
 |---|---|
@@ -38,17 +38,16 @@ Full-workspace provenance:
 [Inaugural](../../results/comparison_refresh_20261102_v1/processed/inaugural/source_manifest.json),
 [Reuters](../../results/comparison_refresh_20261102_v1/processed/reuters/source_manifest.json),
 [WebText](../../results/comparison_refresh_20261102_v1/processed/webtext/source_manifest.json).
-Each records archive path, URL, acquisition time, upstream checksums and document
-identities. General access information: [NLTK Data](https://www.nltk.org/nltk_data/).
+Each records archive path, URL, upstream checksums and document identities.
+General access information: [NLTK Data](https://www.nltk.org/nltk_data/).
 These private provenance links need restoration if omitted from the group ZIP.
 
 ## ROCStories Mirror
 
 Use [hamishivi/ROCStories](https://huggingface.co/datasets/hamishivi/ROCStories)
-revision `cd2b3893a6ee30afada293d5a8f877c3023530e1`; recorded access time
-`2026-11-02T12:31:31.623544+00:00`. The combined 2016/2017-release mirror's
-card declares CC BY 4.0, not independently certified upstream rights. Resolve
-upstream terms before redistribution. Original project information:
+revision `cd2b3893a6ee30afada293d5a8f877c3023530e1`. The combined 2016/2017-release
+mirror's card declares CC BY 4.0, not independently certified upstream rights.
+Resolve upstream terms before redistribution. Original project information:
 [ROCStories project](https://cs.rochester.edu/nlp/rocstories/).
 
 | Pinned public file | SHA256 | Recorded Parquet bytes |
@@ -76,8 +75,10 @@ member hashes and describe the changed container honestly.
    provenance and leakage/near-duplicate audits separately. Hashes alone do
    not recover missing text, order or exclusions.
 3. Match prepared-file SHA256 values and settings. Brown/Gutenberg use 80/10/10;
-   others 70/20/10; split seed 42 except WebText 3999. Preserve test-first exact
-   quarantine and the recorded, unequal near-audit scope in the dataset card.
+   Inaugural/Reuters/ROCStories use 70/20/10; WebText uses 20/40/40 (one/two/two
+   source files). The split seed is 42 except for WebText, which uses 13. Preserve
+   test-first exact quarantine and the recorded, unequal near-audit scope in the
+   dataset card.
 4. Match frozen code/config identity. Relocate runtime paths explicitly because
    saved configs contain original absolute paths. Do not substitute mutable
    downloads, flattened ROC exports, pilot splits or changed scientific settings.

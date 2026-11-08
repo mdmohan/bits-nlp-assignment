@@ -116,16 +116,16 @@ PYTHONPATH=src:src/tests ~/.venvs/nlp-lm/bin/python -B -m unittest test_analysis
 ~/.venvs/nlp-lm/bin/python src/run.py --suite src/configs/data_efficiency_nltk_pilot.yaml --stage all --dry-run
 ```
 
-For a minimal Linux CPU install, install PyTorch from its CPU-only wheel index,
-then install the remaining project dependencies from `req.txt`. This avoids pip
-choosing the default CUDA-enabled PyTorch wheel from PyPI. Notebook and optional
-Hugging Face packages are omitted:
+For a Linux CPU install, install PyTorch from its CPU-only wheel index first,
+then install the complete project dependency set from `src/requirements.txt`.
+Because the matching CPU build is already installed, the second command does
+not replace it with the default CUDA-enabled PyTorch wheel from PyPI:
 
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-python -m pip install -r req.txt
+python -m pip install -r src/requirements.txt
 ```
 
 Use Python 3.10 or newer.

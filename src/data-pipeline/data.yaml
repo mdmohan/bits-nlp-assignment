@@ -12,7 +12,7 @@ corpora:
       provider: NLTK Data
       url: https://www.nltk.org/nltk_data/
       package: brown
-    version: NLTK data package; record the download date and NLTK version used.
+    version: NLTK data package; record the NLTK version and package checksum used.
     license: Check the upstream corpus and NLTK package terms before redistribution.
     limitations: Historical corpus; genre and vocabulary may differ from contemporary text.
     download:
@@ -31,7 +31,7 @@ corpora:
       provider: NLTK Data
       url: https://www.nltk.org/nltk_data/
       package: gutenberg
-    version: NLTK data package; record the download date and NLTK version used.
+    version: NLTK data package; record the NLTK version and package checksum used.
     license: Verify the status and terms for each included book, including the country of use.
     limitations: Books are not independent samples from a single writing domain.
     download:
@@ -50,7 +50,7 @@ corpora:
       provider: NLTK Data
       url: https://www.nltk.org/nltk_data/
       package: webtext
-    version: NLTK data package; record the download date and NLTK version used.
+    version: NLTK data package; record the NLTK version and package checksum used.
     license: Check the upstream corpus and NLTK package terms before redistribution.
     limitations: Small, heterogeneous set of web documents; inspect content before use.
     download:
@@ -68,7 +68,7 @@ corpora:
       provider: NLTK Data
       url: https://www.nltk.org/nltk_data/
       package: inaugural
-    version: NLTK data package; record the download date and NLTK version used.
+    version: NLTK data package; record the NLTK version and package checksum used.
     license: Check the upstream corpus and NLTK package terms before redistribution.
     limitations: Narrow genre and strong historical/time-period effects.
     download:
@@ -84,7 +84,7 @@ corpora:
       provider: NLTK Data
       url: https://www.nltk.org/nltk_data/
       package: reuters
-    version: NLTK data package; record the download date and NLTK version used.
+    version: NLTK data package; record the NLTK version and package checksum used.
     license: Check the upstream corpus and NLTK package terms before redistribution.
     limitations: Newswire domain; source documents may have collection-specific structure.
     download:
@@ -104,7 +104,7 @@ corpora:
     domain: Informal blog text
     source:
       provider: Local archive
-    version: Record the archive source/revision and access date.
+    version: Record the archive source, revision, and checksum.
     license: Verify the original blog sources and redistribution terms before sharing.
     limitations: Blog topics, writing styles, and document lengths may vary substantially.
     preprocessing: "Convert the extracted XML corpus to text with src/data-pipeline/process_blog_xml.py, which uses extract_blog_posts.py and clean_blog_artifacts.py. It writes one text file per source XML with one post per line before the standard pipeline cleaning and loading stages."
@@ -157,7 +157,7 @@ corpora:
 #     language: English
 #     domain: Edited news text
 #     source: {provider: Local archive, url: https://www.nltk.org/nltk_data/}
-#     version: Record archive source and access date.
+#     version: Record archive source, revision, and checksum.
 #     license: Check upstream corpus and package terms before redistribution.
 #     limitations: Treebank text is preprocessed and may contain tokenization conventions.
 #     download:
@@ -176,7 +176,6 @@ corpora:
 #       url: https://example.org/dataset
 #     version: Dataset release or revision
 #     license: License name and link; verify redistribution terms
-#     accessed: YYYY-MM-DD
 #     limitations: Known sampling or coverage limitations
 #     download:
 #       type: url
@@ -186,7 +185,6 @@ corpora:
 
 # For the corpus you select, add these optional documentation fields as you collect them.
 #   version: Release/tag or NLTK package revision
-#   accessed_on: YYYY-MM-DD
 #   license_url: https://example.org/license
 #   files: [{path: ..., sha256: ..., bytes: ...}]
 #   document_count: ...
